@@ -1,0 +1,52 @@
+plugins {
+    id 'java'
+    id 'maven-publish'
+}
+
+group 'in.intellicar.layer5.service.namenode'
+version '1.0'
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+task sourceJar(type: Jar) {
+    from sourceSets.main.allJava
+    classifier = "sources"
+}
+
+task customFatJar(type: Jar) {
+    manifest {
+        attributes 'Main-Class': 'in.intellicar.layer5.service.StorageNameNodeService'
+    }
+    baseName = 'StorageClsAccIDMetaService-all'
+    from { configurations.compile.collect { it.isDirectory() ? it : zipTree(it) } }
+    with jar
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            artifact sourceJar
+        }
+    }
+}
+
+
+dependencies {
+    compile group: 'io.vertx', name:'vertx-core', version:'4.0.2'
+    compile 'io.vertx:vertx-mysql-client:4.0.2'
+    compile group: 'io.vertx', name: 'vertx-sync', version: '4.0.2'
+    compile group: 'mysql', name: 'mysql-connector-java', version: '8.0.23'
+    compile group: 'io.netty', name: 'netty-all', version: '4.1.24.Final'
+    compile group: 'in.intellicar.layer5.beacon', name: 'Layer5Beacon', version: '1.0'
+    compile group: 'in.intellicar.layer5.beacon.storagemetacls', name: 'StorageClusterMetaAPI', version: '1.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.6.0'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+}
+
+test {
+    useJUnitPlatform()
+}

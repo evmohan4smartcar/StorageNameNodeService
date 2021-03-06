@@ -1,0 +1,12 @@
+# Project exclude paths
+/.gradle/
+/gradle/*
+/build/
+/build/classes/java/main/
+/.idea/*
+/in.intellicar.layer5.service.server.StorageClsMtChInit/logs/handler.log.0
+/in.intellicar.layer5.service.server.StorageClsMtChInit/logs/handler.log.0.lck
+/in.intellicar.layer5.service.netty.NettyTCPServer/logs/serverlog.log.0
+/in.intellicar.layer5.service.netty.NettyTCPServer/logs/serverlog.log.0.lck
+/config.json
+in.intellicar.layer5.service.mysql.MySQLHelper/logs/mysql-helper-0.log*
