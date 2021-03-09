@@ -40,10 +40,13 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
     private int bufridx;
     private int bufwidx;
     private String serverName;
-    public Message<StorageClsMetaPayload> event;
+    public Message<StorageClsMetaPayload> event = null;
     private static int seqId = 0;
-    private ChannelHandlerContext ctx;
-    StorageClsMetaPayload payload;
+    private ChannelHandlerContext ctx = null;
+    StorageClsMetaPayload payload = null;
+    private Boolean isActive = false;
+    private Boolean eventTriggered = false;
+
 
     public EventBus eventBus;
     public static int MAIL_ADDED = 1;
@@ -62,19 +65,26 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
         handlerBuffer = new byte[16 * 1024];
         bufridx = 0;
         bufwidx = 0;
+
+        this.eventBus.consumer("/clientreqhandler", (Handler<Message<StorageClsMetaPayload>>) event -> {
+            this.eventTriggered = true;
+            this.payload = event.body();
+            this.event = event;
+            if (this.isActive) {
+                this.ctx.pipeline().fireUserEventTriggered(MAIL_ADDED);
+            }
+        });
     }
 
     @Override
     public void channelActive(ChannelHandlerContext ctx) throws Exception {
         super.channelActive(ctx);
+        this.isActive = true;
         this.ctx = ctx;
         logger.info("Channel active");
-
-        this.eventBus.consumer("/clientreqhandler", (Handler<Message<StorageClsMetaPayload>>) event -> {
-            this.payload = event.body();
-            this.event = event;
+        if(this.eventTriggered){
             this.ctx.pipeline().fireUserEventTriggered(MAIL_ADDED);
-        });
+        }
     }
 
     @Override
@@ -87,7 +97,9 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
                 StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqId++, this.payload);
                 byte[] beaconRaw = new byte[beacon.getBeaconSize()];
                 l5parser.serialize(beaconRaw, 0, beaconRaw.length, beacon, logger);
-                ctx.writeAndFlush(Unpooled.wrappedBuffer(beaconRaw)).addListener((ChannelFutureListener) future -> logger.info("Socket write done"));
+                ctx.writeAndFlush(Unpooled.wrappedBuffer(beaconRaw))
+                        .addListener((ChannelFutureListener) future -> logger.info("Socket write done"))
+                        .addListener(ChannelFutureListener.CLOSE);
             }
         }
     }
