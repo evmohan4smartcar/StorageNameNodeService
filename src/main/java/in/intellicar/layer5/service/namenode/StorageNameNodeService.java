@@ -36,7 +36,6 @@ public class StorageNameNodeService {
 
         Logger consoleLogger = Logger.getLogger("generallog");
 
-
         // STEP 1: Read receiver properties
         ServerProperties serverProperties = new ServerProperties(configFile, consoleLogger);
         if (!serverProperties.isValid) {
@@ -56,7 +55,7 @@ public class StorageNameNodeService {
 
         // STEP 3: Start the MYSQL Query Handler Thread
         MySQLQueryHandler mysqlQueryHandler = new MySQLQueryHandler(vertx, serverProperties.scratchDir, serverProperties.dbMySQLProps,
-                new NameNodePayloadHandler(), consoleLogger);
+                new NameNodePayloadHandler(vertx), consoleLogger);
         mysqlQueryHandler.init();
         mysqlQueryHandler.start();
 

@@ -83,9 +83,7 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
             Integer action = (Integer) evt;
             if (action == MAIL_ADDED){
                 StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqId++, this.payload);
-                byte[] beaconRaw = new byte[beacon.getBeaconSize()];
-                l5parser.serialize(beaconRaw, 0, beaconRaw.length, beacon, logger);
-                ctx.writeAndFlush(Unpooled.wrappedBuffer(beaconRaw))
+                ctx.writeAndFlush(Unpooled.wrappedBuffer(getSerializedByteStream(beacon)))
                         .addListener((ChannelFutureListener) future -> logger.info("Socket write done"));
             }
         }
@@ -99,7 +97,7 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
         }
     }
 
-    private byte[] returnSerializedByteStreamOfBeacon (StorageClsMetaBeacon lBeacon) {
+    private byte[] getSerializedByteStream (StorageClsMetaBeacon lBeacon) {
         int beaconSize = lBeacon.getBeaconSize();
         byte[] beaconSerializedBuffer = new byte[beaconSize];
         l5parser.serialize(beaconSerializedBuffer, 0, beaconSize, lBeacon, logger);

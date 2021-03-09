@@ -10,6 +10,7 @@ import in.intellicar.layer5.beacon.storagemetacls.service.common.IPayloadRequest
 import in.intellicar.layer5.service.namenode.utils.NameNodeUtils;
 import in.intellicar.layer5.utils.sha.SHA256Item;
 import io.vertx.core.Future;
+import io.vertx.core.Vertx;
 import io.vertx.mysqlclient.MySQLPool;
 
 import java.util.logging.Logger;
@@ -21,6 +22,12 @@ import java.util.logging.Logger;
  * @date 02/03/21 - 5:09 PM
  */
 public class NameNodePayloadHandler implements IPayloadRequestHandler {
+    private Vertx vertx;
+
+    public NameNodePayloadHandler(Vertx vertx) {
+        this.vertx = vertx;
+    }
+
     @Override
     public StorageClsMetaPayload getResponsePayload(StorageClsMetaPayload lRequestPayload, MySQLPool lVertxMySQLClient, Logger lLogger) {
         short subType = lRequestPayload.getSubType();
@@ -29,6 +36,12 @@ public class NameNodePayloadHandler implements IPayloadRequestHandler {
         switch (payloadType) {
             case ACCOUNT_ID_GEN_REQ:
                 Future<SHA256Item> accountIDFuture = NameNodeUtils.generateAccountID((AccIdGenerateReq) lRequestPayload, lVertxMySQLClient, lLogger);
+                try {
+                    Future<SHA256Item> instanceIDFuture = NameNodeUtils.getInstanceID(vertx, accountIDFuture.result(), 0, lLogger);
+                    System.out.println("InstanceID: " + instanceIDFuture.result());
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
                 if (accountIDFuture.succeeded()) {
                     return null;
 //                    return accountIDFuture.result();

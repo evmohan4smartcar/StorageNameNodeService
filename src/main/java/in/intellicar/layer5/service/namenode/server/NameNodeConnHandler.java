@@ -151,7 +151,17 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
 
             StorageClsMetaBeacon storageClsMetaBeacon = (StorageClsMetaBeacon) eachBeacon;
             logger.info("Beacon received::" + storageClsMetaBeacon.toJsonString(logger));
+            Handler<AsyncResult<Message<StorageClsMetaPayload>>> replyCallback = new Handler<>() {
+                @Override
+                public void handle(AsyncResult<Message<StorageClsMetaPayload>> event) {
+                    if (ctx != null && !ctx.isRemoved() && event.result()!= null) {
+                        mailbox.add(event.result().body());
+                        ctx.pipeline().fireUserEventTriggered(MAIL_ADDED);
+                    }
+                }
+            };
 
+            eventBus.request("/mysqlqueryhandler", storageClsMetaBeacon.getPayload(), replyCallback);
         }
     }
 

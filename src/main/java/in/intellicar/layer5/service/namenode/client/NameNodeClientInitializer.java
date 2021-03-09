@@ -14,7 +14,7 @@ public class NameNodeClientInitializer extends ChannelInitializer<SocketChannel>
     private Vertx vertx;
     private Logger logger;
 
-    public NameNodeClientInitializer(String lServerName, Vertx Vertx, Logger lLogger) {
+    public NameNodeClientInitializer(String lServerName, Vertx vertx, Logger lLogger) {
         this.logger = lLogger;
         this.vertx = vertx;
         this.serverName=  lServerName;

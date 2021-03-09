@@ -29,7 +29,7 @@ public class NameNodeUtils {
 
     //TODO
     public static Future<SHA256Item> generateAccountID(AccIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger){
-        String accountName = LittleEndianUtils.printHexArray(req.accNameUtf8Bytes);
+        String accountName = new String(req.accNameUtf8Bytes);
 
         Future<SHA256Item> checkedAccountID = checkAccountID(accountName, vertxMySQLClient, logger);
         if (checkedAccountID.succeeded()) {
@@ -41,6 +41,7 @@ public class NameNodeUtils {
             //TODO: Update db.table_name
             Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
                     .execute(Tuple.of(accountName, salt, accountIDSHA.toHex(), 0));
+
 
             while (true) {
                 synchronized (insertFuture) {
@@ -108,18 +109,20 @@ public class NameNodeUtils {
     1. Get InstanceId corresponding to accountName
     2. Send AccIdRegisterReq to InstanceId
     **/
-    public static Future<SHA256Item> getInstanceID(Vertx vertx, EventBus eventBus,SHA256Item accountID, int seqID, Logger logger) throws InterruptedException {
+    public static Future<SHA256Item> getInstanceID(Vertx vertx, SHA256Item accountID, int seqID, Logger logger) throws InterruptedException {
 
+        EventBus eventBus = vertx.eventBus();
         AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(accountID);
         //StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
 
-        NameNodeClient client = new NameNodeClient("192.168.0.116", 10107, "/server/naveen/mb15", vertx, logger);
+
+        NameNodeClient client = new NameNodeClient("localhost", 10107, "/server/naveen/mb13", vertx, logger);
         client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
-        clientThread.join();
+        Thread.sleep(1000);
 
-        Future<Message<StorageClsMetaPayload>> future = eventBus.request("clientreqhandler", req);
+        Future<Message<StorageClsMetaPayload>> future = eventBus.request("/clientreqhandler", req);
 
         while (true) {
             synchronized (future) {
@@ -132,12 +135,14 @@ public class NameNodeUtils {
             }
             if (future.succeeded()) {
                 AssociatedInstanceIdRsp payload = (AssociatedInstanceIdRsp) future.result().body();
-
+                clientThread.join();
                 return Future.succeededFuture(payload.instanceID);
             } else {
+                clientThread.join();
                 return Future.failedFuture(future.cause());
             }
         }
+
     }
 
     public static Future<Integer> getAck() {
