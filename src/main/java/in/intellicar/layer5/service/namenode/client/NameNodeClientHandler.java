@@ -39,7 +39,6 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
     private byte[] handlerBuffer;
     private int bufridx;
     private int bufwidx;
-    private String serverName;
     public Message<StorageClsMetaPayload> event = null;
     private static int seqId = 0;
     private ChannelHandlerContext ctx = null;
@@ -50,9 +49,8 @@ public class NameNodeClientHandler extends SimpleChannelInboundHandler<ByteBuf> 
     public static int MAIL_ADDED = 1;
     private Object _lock = new Object();
 
-    public NameNodeClientHandler(Layer5BeaconParser l5parser, String serverName, Vertx vertx, Logger logger){
+    public NameNodeClientHandler(Layer5BeaconParser l5parser, Vertx vertx, Logger logger){
         this.l5parser = l5parser;
-        this.serverName = serverName;
         this.vertx = vertx;
         this.logger = logger;
 

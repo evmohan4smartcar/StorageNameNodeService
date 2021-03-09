@@ -10,20 +10,18 @@ import io.vertx.core.Vertx;
 import java.util.logging.Logger;
 
 public class NameNodeClientInitializer extends ChannelInitializer<SocketChannel>  {
-    private String serverName;
     private Vertx vertx;
     private Logger logger;
 
-    public NameNodeClientInitializer(String lServerName, Vertx vertx, Logger lLogger) {
+    public NameNodeClientInitializer(Vertx Vertx, Logger lLogger) {
         this.logger = lLogger;
         this.vertx = vertx;
-        this.serverName=  lServerName;
     }
 
     @Override
     protected void initChannel(SocketChannel socketChannel) throws Exception {
         ChannelPipeline pipeline = socketChannel.pipeline();
         pipeline.addLast("client handler", new NameNodeClientHandler(Layer5BeaconParser.getHandler("ClientInit", logger),
-                serverName, vertx, logger));
+                vertx, logger));
     }
 }

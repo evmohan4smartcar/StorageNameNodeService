@@ -15,21 +15,19 @@ public class NameNodeClient implements Runnable{
 
     private final String host;
     private final int port;
-    private String serverName;
     private Vertx vertx;
     private Logger logger;
 
     private ChannelFuture channelFuture;
     private Thread clientThread;
 
-    public NameNodeClient(String host, int port, String serverName, Vertx vertx, Logger logger) {
+    public NameNodeClient(String host, int port, Vertx vertx, Logger logger) {
         this.logger = logger;
         this.host = host;
         this.port = port;
         this.vertx = vertx;
         this.channelFuture = null;
         this.clientThread = null;
-        this.serverName = serverName;
     }
 
     public void startClient(){
@@ -50,7 +48,7 @@ public class NameNodeClient implements Runnable{
             b.group(workerGroup);
             b.channel(NioSocketChannel.class);
             b.option(ChannelOption.SO_KEEPALIVE, true);
-            b.handler(new NameNodeClientInitializer(serverName, vertx, logger));
+            b.handler(new NameNodeClientInitializer(vertx, logger));
 
             channelFuture = b.connect(host, port).sync();
 

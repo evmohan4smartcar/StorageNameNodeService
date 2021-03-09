@@ -28,8 +28,8 @@ import java.util.logging.Logger;
 public class NameNodeUtils {
 
     //TODO
-    public static Future<SHA256Item> generateAccountID(AccIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger){
-        String accountName = new String(req.accNameUtf8Bytes);
+    public static Future<SHA256Item> getAccountID(AccIdGenerateReq req, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
+        String accountName = LittleEndianUtils.printHexArray(req.accNameUtf8Bytes);
 
         Future<SHA256Item> checkedAccountID = checkAccountID(accountName, vertxMySQLClient, logger);
         if (checkedAccountID.succeeded()) {
@@ -42,7 +42,6 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
                     .execute(Tuple.of(accountName, salt, accountIDSHA.toHex(), 0));
 
-
             while (true) {
                 synchronized (insertFuture) {
 
@@ -53,10 +52,54 @@ public class NameNodeUtils {
                     }
                 }
                 if (insertFuture.succeeded()) {
+                    AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
+                    AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
                     return Future.succeededFuture(accountIDSHA);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
                 }
+            }
+        }
+    }
+
+    public static AccIdRegisterRsp sendRegisterAccountIdRequest(AssociatedInstanceIdRsp lInstanceIdRsp, SHA256Item lAccId, String lAccName, String lSalt, Vertx lVertx, Logger lLogger)
+    {
+        AccIdRegisterReq accIdRegReq = new AccIdRegisterReq(lAccId, lAccName.getBytes(StandardCharsets.UTF_8), lSalt.getBytes(StandardCharsets.UTF_8));
+        byte[] ipBytes = lInstanceIdRsp.ip;
+
+        String ipString = Integer.toString(((int)ipBytes[0])) + "." + Integer.toString(((int)ipBytes[1])) + "." +
+                                Integer.toString(((int)ipBytes[2])) + "." + Integer.toString(((int)ipBytes[3]));
+        NameNodeClient client = new NameNodeClient(ipString, lInstanceIdRsp.port, lVertx, lLogger);
+        client.startClient();
+        Thread clientThread = new Thread(client);
+        clientThread.start();
+        try {
+            clientThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        EventBus eventBus = lVertx.eventBus();
+        Future<Message<StorageClsMetaPayload>> future = eventBus.request("clientreqhandler", accIdRegReq);
+
+        while (true) {
+            synchronized (future) {
+
+                try {
+                    future.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (future.succeeded()) {
+                return (AccIdRegisterRsp) future.result().body();
+            } else {
+                Throwable cause = future.cause();;
+                if(cause != null)
+                    lLogger.info("getInstanceId failed with error: " + cause.getMessage());
+                else
+                    lLogger.info("getInstanceID failed");
+                return null;
             }
         }
     }
@@ -109,19 +152,22 @@ public class NameNodeUtils {
     1. Get InstanceId corresponding to accountName
     2. Send AccIdRegisterReq to InstanceId
     **/
-    public static Future<SHA256Item> getInstanceID(Vertx vertx, SHA256Item accountID, int seqID, Logger logger) throws InterruptedException {
+    public static AssociatedInstanceIdRsp getInstanceID(Vertx lVertx, SHA256Item lIdToBeMatched, Logger logger) {
 
-        EventBus eventBus = vertx.eventBus();
-        AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(accountID);
+        AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(lIdToBeMatched);
         //StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
 
-
-        NameNodeClient client = new NameNodeClient("localhost", 10107, "/server/naveen/mb13", vertx, logger);
+        NameNodeClient client = new NameNodeClient("192.168.0.116", 10107, lVertx, logger);
         client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
-        Thread.sleep(1000);
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
 
+        EventBus eventBus = lVertx.eventBus();
         Future<Message<StorageClsMetaPayload>> future = eventBus.request("/clientreqhandler", req);
 
         while (true) {
@@ -134,15 +180,26 @@ public class NameNodeUtils {
                 }
             }
             if (future.succeeded()) {
-                AssociatedInstanceIdRsp payload = (AssociatedInstanceIdRsp) future.result().body();
-                clientThread.join();
-                return Future.succeededFuture(payload.instanceID);
+                try {
+                    clientThread.join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                return (AssociatedInstanceIdRsp) future.result().body();
             } else {
-                clientThread.join();
-                return Future.failedFuture(future.cause());
+                try {
+                    clientThread.join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                Throwable cause = future.cause();;
+                if(cause != null)
+                    logger.info("getInstanceId failed with error: " + cause.getMessage());
+                else
+                    logger.info("getInstanceID failed");
+                return null;
             }
         }
-
     }
 
     public static Future<Integer> getAck() {
@@ -184,7 +241,7 @@ public class NameNodeUtils {
         return generateIdForPath(pathArray, salt);
     }
 
-    public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+    public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, Vertx lVertx, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<SHA256Item> existingNsIdFuture = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
         if (existingNsIdFuture.succeeded()) {
             return existingNsIdFuture;

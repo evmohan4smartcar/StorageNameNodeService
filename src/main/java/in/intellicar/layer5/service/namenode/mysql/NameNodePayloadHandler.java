@@ -22,10 +22,10 @@ import java.util.logging.Logger;
  * @date 02/03/21 - 5:09 PM
  */
 public class NameNodePayloadHandler implements IPayloadRequestHandler {
-    private Vertx vertx;
-
-    public NameNodePayloadHandler(Vertx vertx) {
-        this.vertx = vertx;
+    private Vertx _vertx;
+    public NameNodePayloadHandler(Vertx lVertx)
+    {
+        _vertx = lVertx;
     }
 
     @Override
@@ -35,13 +35,7 @@ public class NameNodePayloadHandler implements IPayloadRequestHandler {
 
         switch (payloadType) {
             case ACCOUNT_ID_GEN_REQ:
-                Future<SHA256Item> accountIDFuture = NameNodeUtils.generateAccountID((AccIdGenerateReq) lRequestPayload, lVertxMySQLClient, lLogger);
-                try {
-                    Future<SHA256Item> instanceIDFuture = NameNodeUtils.getInstanceID(vertx, accountIDFuture.result(), 0, lLogger);
-                    System.out.println("InstanceID: " + instanceIDFuture.result());
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                Future<SHA256Item> accountIDFuture = NameNodeUtils.getAccountID((AccIdGenerateReq) lRequestPayload, _vertx, lVertxMySQLClient, lLogger);
                 if (accountIDFuture.succeeded()) {
                     return null;
 //                    return accountIDFuture.result();
@@ -56,7 +50,7 @@ public class NameNodePayloadHandler implements IPayloadRequestHandler {
                     return new StorageClsMetaErrorRsp(ack.cause().getLocalizedMessage(), lRequestPayload);
                 }
             case NS_ID_GEN_REQ:
-                Future<SHA256Item> nsIdFuture = NameNodeUtils.getNamespaceId((NsIdGenerateReq) lRequestPayload, lVertxMySQLClient, lLogger);
+                Future<SHA256Item> nsIdFuture = NameNodeUtils.getNamespaceId((NsIdGenerateReq) lRequestPayload, _vertx, lVertxMySQLClient, lLogger);
                 if(nsIdFuture.isComplete() && nsIdFuture.succeeded())
                 {
                     SHA256Item nsId = nsIdFuture.result();
