@@ -1,6 +1,5 @@
 package in.intellicar.layer5.service.namenode.utils;
 
-import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaBeacon;
 import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaPayload;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdReq;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdRsp;
@@ -11,9 +10,7 @@ import in.intellicar.layer5.service.namenode.client.NameNodeClient;
 import in.intellicar.layer5.utils.LittleEndianUtils;
 import in.intellicar.layer5.utils.sha.SHA256Item;
 import in.intellicar.layer5.utils.sha.SHA256Utils;
-import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
-import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.Message;
@@ -24,6 +21,7 @@ import io.vertx.sqlclient.Tuple;
 
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
@@ -38,7 +36,7 @@ public class NameNodeUtils {
             return checkedAccountID;
         } else {
             String salt = Long.toHexString(System.nanoTime());
-            SHA256Item accountIDSHA = generateID(req.accNameUtf8Bytes, salt.getBytes());
+            SHA256Item accountIDSHA = generateAccountId(req.accNameUtf8Bytes, salt.getBytes());
 
             //TODO: Update db.table_name
             Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
@@ -98,18 +96,11 @@ public class NameNodeUtils {
         }
     }
 
-    public static SHA256Item generateID(byte[] nameBytes, byte[] saltBytes) {
+    public static SHA256Item generateAccountId(byte[] nameBytes, byte[] saltBytes) {
 
-        byte[] saltyName = new byte[saltBytes.length + nameBytes.length];
-        System.arraycopy(nameBytes, 0, saltyName, 0, nameBytes.length);
-        System.arraycopy(saltBytes, 0, saltyName, nameBytes.length, saltBytes.length);
-
-        try {
-            return SHA256Utils.getSHA256(saltyName);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return null;
-        }
+        ArrayList<byte[]> pathArray = new ArrayList<>();
+        pathArray.add(nameBytes);
+        return generateIdForPath(pathArray, saltBytes);
     }
 
 /*
@@ -120,7 +111,7 @@ TODO: Client End
     public static Future<SHA256Item> getInstanceID(Vertx vertx, EventBus eventBus,SHA256Item accountID, int seqID, Logger logger) throws InterruptedException {
 
         AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(accountID);
-        StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
+        //StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
 
         NameNodeClient client = new NameNodeClient("192.168.0.116", 10107, "/server/naveen/mb15", vertx, logger);
         client.startClient();
@@ -128,7 +119,7 @@ TODO: Client End
         clientThread.start();
         clientThread.join();
 
-        Future<Message<StorageClsMetaPayload>> future = eventBus.request("clientreqhandler", beacon);
+        Future<Message<StorageClsMetaPayload>> future = eventBus.request("clientreqhandler", req);
 
         while (true) {
             synchronized (future) {
@@ -182,21 +173,10 @@ TODO: Client End
     }
 
     public static SHA256Item generateNamespaceId(byte[] accountIDbytes, byte[] nameBytes, byte[] salt) {
-
-        byte[] saltyName = new byte[accountIDbytes.length + 1 + nameBytes.length + 1 + salt.length];
-
-        System.arraycopy(accountIDbytes, 0, saltyName, 0, accountIDbytes.length);
-        saltyName[accountIDbytes.length] = '/';
-        System.arraycopy(nameBytes, 0, saltyName, accountIDbytes.length + 1, nameBytes.length);
-        saltyName[accountIDbytes.length + 1 + nameBytes.length] = '/';
-        System.arraycopy(salt, 0, saltyName, nameBytes.length + 1 + accountIDbytes.length + 1, salt.length);
-
-        try {
-            return SHA256Utils.getSHA256(saltyName);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return null;
-        }
+        ArrayList<byte[]> pathArray = new ArrayList<>();
+        pathArray.add(accountIDbytes);
+        pathArray.add(nameBytes);
+        return generateIdForPath(pathArray, salt);
     }
 
     public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
@@ -257,29 +237,12 @@ TODO: Client End
     }
 
     public static SHA256Item generateDirId(byte[] lNsIdBytes, boolean lHasParentDir, byte[] lParentDirid, byte[] lDirNameBytes, byte[] salt) {
-        int saltedDirPathBytes = lNsIdBytes.length + 1 + (lHasParentDir? lParentDirid.length : 0) + 1 +
-                lDirNameBytes.length + 1 + salt.length;
-        byte[] saltyName = new byte[saltedDirPathBytes];
-
-        System.arraycopy(lNsIdBytes, 0, saltyName, 0, lNsIdBytes.length);
-        saltyName[lNsIdBytes.length] = '/';
-        int curIdx = lNsIdBytes.length + 1;
+        ArrayList<byte[]> pathArray = new ArrayList<>();
+        pathArray.add(lNsIdBytes);
         if(lHasParentDir)
-        {
-            System.arraycopy(lParentDirid, 0, saltyName, lNsIdBytes.length + 1, lParentDirid.length);
-            saltyName[lNsIdBytes.length + 1 + lParentDirid.length] = '/';
-            curIdx = lNsIdBytes.length + 1 + lParentDirid.length + 1;
-        }
-        System.arraycopy(lDirNameBytes, 0, saltyName, curIdx, lDirNameBytes.length);
-        saltyName[curIdx + lDirNameBytes.length] = '/';
-        System.arraycopy(salt, 0, saltyName, curIdx + lDirNameBytes.length + 1, salt.length);
-
-        try {
-            return SHA256Utils.getSHA256(saltyName);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return null;
-        }
+            pathArray.add(lParentDirid);
+        pathArray.add(lDirNameBytes);
+        return generateIdForPath(pathArray, salt);
     }
 
     public static Future<SHA256Item> getDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
@@ -342,25 +305,11 @@ TODO: Client End
     }
 
     public static SHA256Item generateFileId(byte[] lNsIdBytes, byte[] lParentDirid, byte[] lFileNameBytes, byte[] salt) {
-        int saltedDirPathBytes = lNsIdBytes.length + 1 + lParentDirid.length + 1 +
-                lFileNameBytes.length + 1 + salt.length;
-        byte[] saltyName = new byte[saltedDirPathBytes];
-
-        System.arraycopy(lNsIdBytes, 0, saltyName, 0, lNsIdBytes.length);
-        saltyName[lNsIdBytes.length] = '/';
-        int curIdx = lNsIdBytes.length + 1;
-        System.arraycopy(lParentDirid, 0, saltyName, lNsIdBytes.length + 1, lParentDirid.length);
-        saltyName[lNsIdBytes.length + 1 + lParentDirid.length] = '/';
-        System.arraycopy(lFileNameBytes, 0, saltyName, lNsIdBytes.length + 1 + lParentDirid.length + 1, lFileNameBytes.length);
-        saltyName[curIdx + lFileNameBytes.length] = '/';
-        System.arraycopy(salt, 0, saltyName, lNsIdBytes.length + 1 + lParentDirid.length + 1 + lFileNameBytes.length + 1, salt.length);
-
-        try {
-            return SHA256Utils.getSHA256(saltyName);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return null;
-        }
+        ArrayList<byte[]> pathArray = new ArrayList<>();
+        pathArray.add(lNsIdBytes);
+        pathArray.add(lParentDirid);
+        pathArray.add(lFileNameBytes);
+        return generateIdForPath(pathArray, salt);
     }
 
     public static Future<SHA256Item> getFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
@@ -463,22 +412,10 @@ TODO: Client End
 
 
     public static SHA256Item generateFileVersionId(byte[] lFileIdBytes, byte[] lVersionNoBytes, byte[] salt) {
-        int saltedDirPathBytes = lFileIdBytes.length + 1 + lVersionNoBytes.length + 1 +
-                + salt.length;
-        byte[] saltyName = new byte[saltedDirPathBytes];
-
-        System.arraycopy(lFileIdBytes, 0, saltyName, 0, lFileIdBytes.length);
-        saltyName[lFileIdBytes.length] = '/';
-        System.arraycopy(lVersionNoBytes, 0, saltyName, lFileIdBytes.length + 1, lVersionNoBytes.length);
-        saltyName[lFileIdBytes.length + 1 + lVersionNoBytes.length] = '/';
-        System.arraycopy(salt, 0, saltyName, lFileIdBytes.length + 1 + lVersionNoBytes.length + 1, salt.length);
-
-        try {
-            return SHA256Utils.getSHA256(saltyName);
-        } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
-            return null;
-        }
+        ArrayList<byte[]> pathArray = new ArrayList<>();
+        pathArray.add(lFileIdBytes);
+        pathArray.add(lVersionNoBytes);
+        return generateIdForPath(pathArray, salt);
     }
 
     /**
@@ -487,7 +424,7 @@ TODO: Client End
      * @param salt
      * @return
      */
-    public static SHA256Item generateId(List<byte[]>lIdsAndStringsMakingAbsPath, byte[] salt)
+    public static SHA256Item generateIdForPath(List<byte[]>lIdsAndStringsMakingAbsPath, byte[] salt)
     {
         int totalLength = 0;
         for (byte[] idBytes: lIdsAndStringsMakingAbsPath)
