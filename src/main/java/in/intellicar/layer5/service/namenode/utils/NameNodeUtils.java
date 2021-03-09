@@ -4,8 +4,7 @@ import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaBeacon;
 import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaPayload;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdReq;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdRsp;
-import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.client.AccIdGenerateReq;
-import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.client.AccIdGenerateRsp;
+import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.client.*;
 import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.internal.AccIdRegisterReq;
 import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.internal.AccIdRegisterRsp;
 import in.intellicar.layer5.service.namenode.client.NameNodeClient;
@@ -25,6 +24,7 @@ import io.vertx.sqlclient.Tuple;
 
 import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
+import java.util.List;
 import java.util.logging.Logger;
 
 public class NameNodeUtils {
@@ -153,4 +153,391 @@ TODO: Client End
         return Future.succeededFuture(1);
     }
 
+
+    public static Future<SHA256Item> checkNamespaceId(NsIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger) {
+        String namespaceName = new String(req.namespaceBytes, StandardCharsets.UTF_8);
+        String sql = "SELECT namespace_id from accounts.namespaceinfo where namespace_name = '" + namespaceName + "' and account_id = '" + req.accountID.toHex() + "'";
+        Future<RowSet<Row>> future = vertxMySQLClient
+                .query(sql)
+                .execute();
+        while (true) {
+            synchronized (future) {
+                try {
+                    future.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (future.isComplete()) {
+                RowSet<Row> rows = future.result();
+                if (rows != null && rows.size() > 0) {
+                    String idHexString = rows.iterator().next().getString("namespace_id");
+                    SHA256Item namespaceID = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                    return Future.succeededFuture(namespaceID);
+                } else {
+                    return Future.failedFuture(future.cause());
+                }
+            }
+        }
+    }
+
+    public static SHA256Item generateNamespaceId(byte[] accountIDbytes, byte[] nameBytes, byte[] salt) {
+
+        byte[] saltyName = new byte[accountIDbytes.length + 1 + nameBytes.length + 1 + salt.length];
+
+        System.arraycopy(accountIDbytes, 0, saltyName, 0, accountIDbytes.length);
+        saltyName[accountIDbytes.length] = '/';
+        System.arraycopy(nameBytes, 0, saltyName, accountIDbytes.length + 1, nameBytes.length);
+        saltyName[accountIDbytes.length + 1 + nameBytes.length] = '/';
+        System.arraycopy(salt, 0, saltyName, nameBytes.length + 1 + accountIDbytes.length + 1, salt.length);
+
+        try {
+            return SHA256Utils.getSHA256(saltyName);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        Future<SHA256Item> existingNsIdFuture = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
+        if (existingNsIdFuture.succeeded()) {
+            return existingNsIdFuture;
+        } else {
+            String namespaceName = new String(lReq.namespaceBytes, StandardCharsets.UTF_8);
+            String salt = Long.toHexString(System.nanoTime());
+
+            SHA256Item namespaceID = generateNamespaceId(lReq.accountID.hashdata, lReq.namespaceBytes, salt.getBytes());
+            Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.namespaceinfo (account_id, namespace_name, salt, namespace_id) values (?, ?, ?, ?)")
+                    .execute(Tuple.of(lReq.accountID.toHex(), namespaceName, salt, namespaceID.toHex()));
+
+            while (true) {
+                synchronized (insertFuture) {
+                    try {
+                        insertFuture.wait(500);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                if (insertFuture.succeeded()) {
+                    return Future.succeededFuture(namespaceID);
+                } else {
+                    return Future.failedFuture(insertFuture.cause());
+                }
+            }
+        }
+    }
+    public static Future<SHA256Item> checkDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
+        String sql = "SELECT dir_id from accounts.directoryinfo where ns_id = '" + lReq.nsId.toHex() +
+                "' and parentdir_id = '" + (lReq.hasParentDir == 1 ? lReq.parentDirId.toHex(): "") +
+                "' and dir_name = '" + dirName + "'";
+        Future<RowSet<Row>> future = lVertxMySQLClient
+                .query(sql)
+                .execute();
+        while (true) {
+            synchronized (future) {
+                try {
+                    future.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (future.isComplete()) {
+                RowSet<Row> rows = future.result();
+                if (rows != null && rows.size() > 0) {
+                    String idHexString = rows.iterator().next().getString("dir_id");
+                    SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                    return Future.succeededFuture(dirId);
+                } else {
+                    return Future.failedFuture(future.cause());
+                }
+            }
+        }
+    }
+
+    public static SHA256Item generateDirId(byte[] lNsIdBytes, boolean lHasParentDir, byte[] lParentDirid, byte[] lDirNameBytes, byte[] salt) {
+        int saltedDirPathBytes = lNsIdBytes.length + 1 + (lHasParentDir? lParentDirid.length : 0) + 1 +
+                lDirNameBytes.length + 1 + salt.length;
+        byte[] saltyName = new byte[saltedDirPathBytes];
+
+        System.arraycopy(lNsIdBytes, 0, saltyName, 0, lNsIdBytes.length);
+        saltyName[lNsIdBytes.length] = '/';
+        int curIdx = lNsIdBytes.length + 1;
+        if(lHasParentDir)
+        {
+            System.arraycopy(lParentDirid, 0, saltyName, lNsIdBytes.length + 1, lParentDirid.length);
+            saltyName[lNsIdBytes.length + 1 + lParentDirid.length] = '/';
+            curIdx = lNsIdBytes.length + 1 + lParentDirid.length + 1;
+        }
+        System.arraycopy(lDirNameBytes, 0, saltyName, curIdx, lDirNameBytes.length);
+        saltyName[curIdx + lDirNameBytes.length] = '/';
+        System.arraycopy(salt, 0, saltyName, curIdx + lDirNameBytes.length + 1, salt.length);
+
+        try {
+            return SHA256Utils.getSHA256(saltyName);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static Future<SHA256Item> getDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        Future<SHA256Item> existingDirIdFuture = checkDirId(lReq, lVertxMySQLClient, lLogger);
+        if (existingDirIdFuture.succeeded()) {
+            return existingDirIdFuture;
+        } else {
+            String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
+            String salt = Long.toHexString(System.nanoTime());
+
+            SHA256Item dirId = generateDirId(lReq.nsId.hashdata, lReq.hasParentDir == 1,
+                    lReq.parentDirId.hashdata, lReq.dirNameUtf8Bytes, salt.getBytes());
+            Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.directoryinfo (ns_id, parentdir_id, dir_name, salt, dir_id) values (?, ?, ?, ?, ?)")
+                    .execute(Tuple.of(lReq.nsId.toHex(), (lReq.hasParentDir == 1?lReq.parentDirId.toHex():""), dirName, salt, dirId.toHex()));
+
+            while (true) {
+                synchronized (insertFuture) {
+                    try {
+                        insertFuture.wait(500);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                if (insertFuture.succeeded()) {
+                    return Future.succeededFuture(dirId);
+                } else {
+                    return Future.failedFuture(insertFuture.cause());
+                }
+            }
+        }
+    }
+
+    public static Future<SHA256Item> checkFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        String fileName = new String(lReq.fileNameUtf8Bytes, StandardCharsets.UTF_8);
+        String sql = "SELECT file_id from accounts.fileinfo where ns_id = '" + lReq.nsId.toHex() +
+                "' and parentdir_id = '" + lReq.parentDirId.toHex() +
+                "' and file_name = '" + fileName + "'";
+        Future<RowSet<Row>> future = lVertxMySQLClient
+                .query(sql)
+                .execute();
+        while (true) {
+            synchronized (future) {
+                try {
+                    future.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (future.isComplete()) {
+                RowSet<Row> rows = future.result();
+                if (rows != null && rows.size() > 0) {
+                    String idHexString = rows.iterator().next().getString("file_id");
+                    SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                    return Future.succeededFuture(dirId);
+                } else {
+                    return Future.failedFuture(future.cause());
+                }
+            }
+        }
+    }
+
+    public static SHA256Item generateFileId(byte[] lNsIdBytes, byte[] lParentDirid, byte[] lFileNameBytes, byte[] salt) {
+        int saltedDirPathBytes = lNsIdBytes.length + 1 + lParentDirid.length + 1 +
+                lFileNameBytes.length + 1 + salt.length;
+        byte[] saltyName = new byte[saltedDirPathBytes];
+
+        System.arraycopy(lNsIdBytes, 0, saltyName, 0, lNsIdBytes.length);
+        saltyName[lNsIdBytes.length] = '/';
+        int curIdx = lNsIdBytes.length + 1;
+        System.arraycopy(lParentDirid, 0, saltyName, lNsIdBytes.length + 1, lParentDirid.length);
+        saltyName[lNsIdBytes.length + 1 + lParentDirid.length] = '/';
+        System.arraycopy(lFileNameBytes, 0, saltyName, lNsIdBytes.length + 1 + lParentDirid.length + 1, lFileNameBytes.length);
+        saltyName[curIdx + lFileNameBytes.length] = '/';
+        System.arraycopy(salt, 0, saltyName, lNsIdBytes.length + 1 + lParentDirid.length + 1 + lFileNameBytes.length + 1, salt.length);
+
+        try {
+            return SHA256Utils.getSHA256(saltyName);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static Future<SHA256Item> getFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        Future<SHA256Item> existingFileIdFuture = checkFileId(lReq, lVertxMySQLClient, lLogger);
+        if (existingFileIdFuture.succeeded()) {
+            return existingFileIdFuture;
+        } else {
+            String fileName = new String(lReq.fileNameUtf8Bytes, StandardCharsets.UTF_8);
+            String salt = Long.toHexString(System.nanoTime());
+
+            SHA256Item fileId = generateFileId(lReq.nsId.hashdata,
+                    lReq.parentDirId.hashdata, lReq.fileNameUtf8Bytes, salt.getBytes());
+            Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.fileinfo (ns_id, parentdir_id, file_name, salt, file_id) values (?, ?, ?, ?, ?)")
+                    .execute(Tuple.of(lReq.nsId.toHex(), lReq.parentDirId.toHex(), lReq.fileNameUtf8Bytes, salt, fileId.toHex()));
+
+            while (true) {
+                synchronized (insertFuture) {
+                    try {
+                        insertFuture.wait(500);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                if (insertFuture.succeeded()) {
+                    addFileVersion(fileId, lVertxMySQLClient);//adding file version
+                    return Future.succeededFuture(fileId);
+                } else {
+                    return Future.failedFuture(insertFuture.cause());
+                }
+            }
+        }
+    }
+    public static void addFileVersion(SHA256Item lFileId, MySQLPool lVertxMySQLClient)
+    {
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_info (file_id, file_version) values (?, ?)")
+                .execute(Tuple.of(lFileId.toHex(), 0));
+
+        while (true) {
+            synchronized (insertFuture) {
+                try {
+                    insertFuture.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (insertFuture.succeeded()) {
+                return;//TODO:: return type need to be added to handle errors
+            } else {
+                return ;
+            }
+        }
+    }
+    public static Future<String> getAndUpdateFileVersionNo(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        String sql = "SELECT file_version from accounts.file_version_info where file_id = '" + lReq.fileId.toHex() + "'";
+        Future<RowSet<Row>> future = lVertxMySQLClient
+                .query(sql)
+                .execute();
+        while (true) {
+            synchronized (future) {
+                try {
+                    future.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (future.isComplete()) {
+                RowSet<Row> rows = future.result();
+                if (rows != null && rows.size() > 0) {
+                    String fileVersionString = rows.iterator().next().getString("file_version");
+                    updateFileVersion(lReq.fileId, fileVersionString, lVertxMySQLClient);
+                    Future.succeededFuture(fileVersionString);
+                }
+            } else {
+                return Future.failedFuture(future.cause());
+            }
+        }
+    }
+
+    public static void updateFileVersion(SHA256Item lFileId, String lCurrVersion, MySQLPool lVertxMySQLClient)
+    {
+        String sql = "Update accounts.file_version_info set file_version = '"+ Integer.parseInt(lCurrVersion) + 1 +"' where file_id = '" + lFileId.toHex() + "'";
+        Future<RowSet<Row>> updateFuture = lVertxMySQLClient
+                .query(sql)
+                .execute();
+        while (true) {
+            synchronized (updateFuture) {
+                try {
+                    updateFuture.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (updateFuture.isComplete() && updateFuture.succeeded()) {
+                return ;//TODO:: return type need to be added to handle errors
+            } else {
+                return ;
+            }
+        }
+    }
+
+
+    public static SHA256Item generateFileVersionId(byte[] lFileIdBytes, byte[] lVersionNoBytes, byte[] salt) {
+        int saltedDirPathBytes = lFileIdBytes.length + 1 + lVersionNoBytes.length + 1 +
+                + salt.length;
+        byte[] saltyName = new byte[saltedDirPathBytes];
+
+        System.arraycopy(lFileIdBytes, 0, saltyName, 0, lFileIdBytes.length);
+        saltyName[lFileIdBytes.length] = '/';
+        System.arraycopy(lVersionNoBytes, 0, saltyName, lFileIdBytes.length + 1, lVersionNoBytes.length);
+        saltyName[lFileIdBytes.length + 1 + lVersionNoBytes.length] = '/';
+        System.arraycopy(salt, 0, saltyName, lFileIdBytes.length + 1 + lVersionNoBytes.length + 1, salt.length);
+
+        try {
+            return SHA256Utils.getSHA256(saltyName);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    /**
+     * This method will be used where ever we need to generate Ids. Individual generate methods will be replaced by this method
+     * @param lIdsAndStringsMakingAbsPath
+     * @param salt
+     * @return
+     */
+    public static SHA256Item generateId(List<byte[]>lIdsAndStringsMakingAbsPath, byte[] salt)
+    {
+        int totalLength = 0;
+        for (byte[] idBytes: lIdsAndStringsMakingAbsPath)
+        {
+            totalLength += idBytes.length + 1;
+        }
+        byte[] saltyName = new byte[totalLength+ salt.length];
+        int curIdx = 0;
+        for (byte[] idBytes: lIdsAndStringsMakingAbsPath)
+        {
+            System.arraycopy(idBytes, 0, saltyName, curIdx, idBytes.length);
+            saltyName[curIdx + idBytes.length] = '/';
+            curIdx += idBytes.length + 1;
+        }
+        System.arraycopy(salt, 0, saltyName, curIdx, salt.length);
+
+        try {
+            return SHA256Utils.getSHA256(saltyName);
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    public static Future<SHA256Item> getFileVersionId(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        Future<String> fileVersionFuture = getAndUpdateFileVersionNo(lReq, lVertxMySQLClient, lLogger);
+        if (fileVersionFuture.succeeded()) {
+            String fileVersion = fileVersionFuture.result();
+            String salt = Long.toHexString(System.nanoTime());
+            SHA256Item fileVersionId = generateFileVersionId(lReq.fileId.hashdata,
+                    fileVersion.getBytes(StandardCharsets.UTF_8), salt.getBytes());
+            Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_id_info (file_id, version, salt, file_version_id) values (?, ?, ?, ?)")
+                    .execute(Tuple.of(lReq.fileId.toHex(), fileVersion, salt, fileVersionId.toHex()));
+
+            while (true) {
+                synchronized (insertFuture) {
+                    try {
+                        insertFuture.wait(500);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                if (insertFuture.succeeded()) {
+                    return Future.succeededFuture(fileVersionId);
+                } else {
+                    return Future.failedFuture(insertFuture.cause());
+                }
+            }
+        } else {
+            return Future.failedFuture(fileVersionFuture.cause());
+        }
+    }
 }
