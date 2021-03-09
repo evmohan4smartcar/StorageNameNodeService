@@ -103,11 +103,11 @@ public class NameNodeUtils {
         return generateIdForPath(pathArray, saltBytes);
     }
 
-/*
-TODO: Client End
-1. Get InstanceId corresponding to accountName
-2. Send AccIdRegisterReq to InstanceId
-**/
+    /*
+    TODO: Client End
+    1. Get InstanceId corresponding to accountName
+    2. Send AccIdRegisterReq to InstanceId
+    **/
     public static Future<SHA256Item> getInstanceID(Vertx vertx, EventBus eventBus,SHA256Item accountID, int seqID, Logger logger) throws InterruptedException {
 
         AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(accountID);
@@ -267,10 +267,32 @@ TODO: Client End
                     }
                 }
                 if (insertFuture.succeeded()) {
+                    registerDirId(dirId, lReq, salt, lVertxMySQLClient);
                     return Future.succeededFuture(dirId);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
                 }
+            }
+        }
+    }
+
+    public static void registerDirId(SHA256Item lDirId, DirIdGenerateAndRegisterReq lReq, String lSalt, MySQLPool lVertxMySQLClient)
+    {
+        String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.directoryid_info (ns_id, parentdir_id, dir_name, salt, dir_id) values (?, ?, ?, ?, ?)")
+                .execute(Tuple.of(lReq.nsId.toHex(), (lReq.hasParentDir == 1?lReq.parentDirId.toHex():""), dirName, lSalt, lDirId.toHex()));
+        while (true) {
+            synchronized (insertFuture) {
+                try {
+                    insertFuture.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (insertFuture.succeeded()) {
+                return ;
+            } else {
+                return ;
             }
         }
     }
@@ -334,11 +356,32 @@ TODO: Client End
                     }
                 }
                 if (insertFuture.succeeded()) {
+                    registerFileId(fileId, lReq, salt, lVertxMySQLClient);
                     addFileVersion(fileId, lVertxMySQLClient);//adding file version
                     return Future.succeededFuture(fileId);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
                 }
+            }
+        }
+    }
+
+    public static void registerFileId(SHA256Item lFileId, FileIdGenerateAndRegisterReq lReq, String lSalt, MySQLPool lVertxMySQLClient)
+    {
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.fileid_info (ns_id, parentdir_id, file_name, salt, file_id) values (?, ?, ?, ?, ?)")
+                .execute(Tuple.of(lReq.nsId.toHex(), lReq.parentDirId.toHex(), lReq.fileNameUtf8Bytes, lSalt, lFileId.toHex()));
+        while (true) {
+            synchronized (insertFuture) {
+                try {
+                    insertFuture.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (insertFuture.succeeded()) {
+                return ;
+            } else {
+                return ;
             }
         }
     }
@@ -431,7 +474,7 @@ TODO: Client End
         {
             totalLength += idBytes.length + 1;
         }
-        byte[] saltyName = new byte[totalLength+ salt.length];
+        byte[] saltyName = new byte[totalLength + salt.length];
         int curIdx = 0;
         for (byte[] idBytes: lIdsAndStringsMakingAbsPath)
         {
@@ -468,6 +511,7 @@ TODO: Client End
                     }
                 }
                 if (insertFuture.succeeded()) {
+                    registerFileVersionId(fileVersionId, lReq, fileVersion, salt, lVertxMySQLClient);
                     return Future.succeededFuture(fileVersionId);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
@@ -475,6 +519,26 @@ TODO: Client End
             }
         } else {
             return Future.failedFuture(fileVersionFuture.cause());
+        }
+    }
+
+    public static void registerFileVersionId(SHA256Item lFileVersionId, FileVersionIdGenerateAndRegisterReq lReq, String lFileVersion, String lSalt, MySQLPool lVertxMySQLClient)
+    {
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_id_r_info (file_id, version, salt, file_version_id) values (?, ?, ?, ?)")
+                .execute(Tuple.of(lReq.fileId.toHex(), lFileVersion, lSalt, lFileVersionId.toHex()));
+        while (true) {
+            synchronized (insertFuture) {
+                try {
+                    insertFuture.wait(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            if (insertFuture.succeeded()) {
+                return ;
+            } else {
+                return ;
+            }
         }
     }
 }
