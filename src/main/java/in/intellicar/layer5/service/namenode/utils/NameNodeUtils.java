@@ -127,6 +127,9 @@ public class NameNodeUtils {
 
         String ipString = Byte.toUnsignedInt(ipBytes[0]) + "." + Byte.toUnsignedInt(ipBytes[1]) + "." +
                 Byte.toUnsignedInt(ipBytes[2]) + "." + Byte.toUnsignedInt(ipBytes[3]);
+        System.out.println("Port: " + lInstanceIdRsp.port);
+        System.out.println("Host: " + ipString);
+
         NameNodeClient client = new NameNodeClient(ipString, lInstanceIdRsp.port, lVertx, lLogger);
         Thread clientThread = new Thread(client);
         clientThread.start();
@@ -178,7 +181,7 @@ public class NameNodeUtils {
     public static Future<SHA256Item> getAccountID(AccIdGenerateReq req, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
         String accountName = new String(req.accNameUtf8Bytes, StandardCharsets.UTF_8);
         Future<SHA256Item> checkedAccountIDFuture = checkAccountID(accountName, vertxMySQLClient, logger);
-        doWaitOnFuture(checkedAccountIDFuture);
+//        doWaitOnFuture(checkedAccountIDFuture);
         if (checkedAccountIDFuture.succeeded()) {
             return checkedAccountIDFuture;
         } else {
@@ -205,7 +208,7 @@ public class NameNodeUtils {
         String accountName = new String(lReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
         String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.account_id_info (account_id, account_name, salt) values (?, ?, ?)")
-                .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString, 0));
+                .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString));
 
         doWaitOnFuture(insertFuture);
         if (insertFuture.succeeded()) {
