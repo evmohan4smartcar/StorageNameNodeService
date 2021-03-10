@@ -53,31 +53,17 @@ public class NameNodeUtils {
 
         EventBus eventBus = lVertx.eventBus();
         Future<Message<StorageClsMetaPayload>> future = eventBus.request("/clientreqhandler", req);
-
-        while (true) {
-            synchronized (future) {
-
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if(future.isComplete()) {
-                if (future.succeeded()) {
-                    resultValue = (AssociatedInstanceIdRsp) future.result().body();
-                    break;
-                } else {
-                    Throwable cause = future.cause();
-                    ;
-                    if (cause != null)
-                        logger.info("getInstanceId failed with error: " + cause.getMessage());
-                    else
-                        logger.info("getInstanceID failed");
-                    resultValue = null;
-                }
-            }
-
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            resultValue = (AssociatedInstanceIdRsp) future.result().body();
+        } else {
+            Throwable cause = future.cause();
+            ;
+            if (cause != null)
+                logger.info("getInstanceId failed with error: " + cause.getMessage());
+            else
+                logger.info("getInstanceID failed");
+            resultValue = null;
         }
         try {
             clientThread.join();
@@ -111,25 +97,20 @@ public class NameNodeUtils {
         Future<RowSet<Row>> future = vertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (future) {
 
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            RowSet<Row> rows = future.result();
+            if (rows != null && rows.size() > 0) {
+                String hexID = rows.iterator().next().getString("account_id"); // TODO update column name
+                SHA256Item accountIDSHA = new SHA256Item(LittleEndianUtils.hexStringToByteArray(hexID));
+                return Future.succeededFuture(accountIDSHA);
+            } else {
+                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
             }
-            if (future.isComplete()) {
-                RowSet<Row> rows = future.result();
-                if (rows != null && rows.size() > 0) {
-                    String hexID = rows.iterator().next().getString("account_id"); // TODO update column name
-                    SHA256Item accountIDSHA = new SHA256Item(LittleEndianUtils.hexStringToByteArray(hexID));
-                    return Future.succeededFuture(accountIDSHA);
-                } else {
-                    return Future.failedFuture(future.cause());
-                }
-            }
+        }
+        else {
+            return Future.failedFuture(future.cause());
         }
     }
 
@@ -151,6 +132,7 @@ public class NameNodeUtils {
         client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
+        AccIdRegisterRsp returnValue = null;
         try {
             Thread.sleep(1000);
         } catch (InterruptedException e) {
@@ -160,36 +142,23 @@ public class NameNodeUtils {
         EventBus eventBus = lVertx.eventBus();
         Future<Message<StorageClsMetaPayload>> future = eventBus.request("/clientreqhandler", accIdRegReq);
 
-        while (true) {
-            synchronized (future) {
-
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (future.succeeded()) {
-                try {
-                    clientThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                return (AccIdRegisterRsp) future.result().body();
-            } else {
-                try {
-                    clientThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                Throwable cause = future.cause();;
-                if(cause != null)
-                    lLogger.info("getInstanceId failed with error: " + cause.getMessage());
-                else
-                    lLogger.info("getInstanceID failed");
-                return null;
-            }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            returnValue = (AccIdRegisterRsp) future.result().body();
+        } else {
+            Throwable cause = future.cause();;
+            if(cause != null)
+                lLogger.info("getInstanceId failed with error: " + cause.getMessage());
+            else
+                lLogger.info("getInstanceID failed");
         }
+        try {
+            clientThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return returnValue;
+
     }
 
     private static void updateAckOfAccName(AccIdRegisterRsp lRsp, MySQLPool lVertxMySQLClient, Logger logger)
@@ -210,10 +179,10 @@ public class NameNodeUtils {
 
     public static Future<SHA256Item> getAccountID(AccIdGenerateReq req, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
         String accountName = LittleEndianUtils.printHexArray(req.accNameUtf8Bytes);
-
-        Future<SHA256Item> checkedAccountID = checkAccountID(accountName, vertxMySQLClient, logger);
-        if (checkedAccountID.succeeded()) {
-            return checkedAccountID;
+        Future<SHA256Item> checkedAccountIDFuture = checkAccountID(accountName, vertxMySQLClient, logger);
+        doWaitOnFuture(checkedAccountIDFuture);
+        if (checkedAccountIDFuture.succeeded()) {
+            return checkedAccountIDFuture;
         } else {
             String salt = Long.toHexString(System.nanoTime());
             SHA256Item accountIDSHA = generateAccountId(req.accNameUtf8Bytes, salt.getBytes());
@@ -222,23 +191,14 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
                     .execute(Tuple.of(accountName, salt, accountIDSHA.toHex(), 0));
 
-            while (true) {
-                synchronized (insertFuture) {
-
-                    try {
-                        insertFuture.wait(500);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (insertFuture.succeeded()) {
-                    AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
-                    AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
-                    updateAckOfAccName(accIdRegisterRsp, vertxMySQLClient, logger);
-                    return Future.succeededFuture(accountIDSHA);
-                } else {
-                    return Future.failedFuture(insertFuture.cause());
-                }
+            doWaitOnFuture(insertFuture);
+            if (insertFuture.succeeded()) {
+                AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
+                AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
+                updateAckOfAccName(accIdRegisterRsp, vertxMySQLClient, logger);
+                return Future.succeededFuture(accountIDSHA);
+            } else {
+                return Future.failedFuture(insertFuture.cause());
             }
         }
     }
@@ -264,24 +224,19 @@ public class NameNodeUtils {
         Future<RowSet<Row>> future = vertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (future) {
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            RowSet<Row> rows = future.result();
+            if (rows != null && rows.size() > 0) {
+                String idHexString = rows.iterator().next().getString("namespace_id");
+                SHA256Item namespaceID = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                return Future.succeededFuture(namespaceID);
+            } else {
+                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
             }
-            if (future.isComplete()) {
-                RowSet<Row> rows = future.result();
-                if (rows != null && rows.size() > 0) {
-                    String idHexString = rows.iterator().next().getString("namespace_id");
-                    SHA256Item namespaceID = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                    return Future.succeededFuture(namespaceID);
-                } else {
-                    return Future.failedFuture(future.cause());
-                }
-            }
+        }
+        else{
+            return Future.failedFuture(future.cause());
         }
     }
 
@@ -303,6 +258,7 @@ public class NameNodeUtils {
         client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
+        NsIdRegisterRsp returnValue = null;
         try {
             Thread.sleep(1000);
         } catch (InterruptedException e) {
@@ -312,36 +268,22 @@ public class NameNodeUtils {
         EventBus eventBus = lVertx.eventBus();
         Future<Message<StorageClsMetaPayload>> future = eventBus.request("/clientreqhandler", nsIdRegReq);
 
-        while (true) {
-            synchronized (future) {
-
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (future.succeeded()) {
-                try {
-                    clientThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                return (NsIdRegisterRsp) future.result().body();
-            } else {
-                try {
-                    clientThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                Throwable cause = future.cause();;
-                if(cause != null)
-                    lLogger.info("getInstanceId failed with error: " + cause.getMessage());
-                else
-                    lLogger.info("getInstanceID failed");
-                return null;
-            }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            returnValue = (NsIdRegisterRsp) future.result().body();
+        } else {
+            Throwable cause = future.cause();;
+            if(cause != null)
+                lLogger.info("getInstanceId failed with error: " + cause.getMessage());
+            else
+                lLogger.info("getInstanceID failed");;
         }
+        try {
+            clientThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return returnValue;
     }
 
     private static void updateAckOfNsName(NsIdRegisterRsp lRsp, MySQLPool lVertxMySQLClient, Logger logger)
@@ -363,6 +305,7 @@ public class NameNodeUtils {
 
     public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, Vertx lVertx, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<SHA256Item> existingNsIdFuture = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
+        doWaitOnFuture(existingNsIdFuture);
         if (existingNsIdFuture.succeeded()) {
             return existingNsIdFuture;
         } else {
@@ -373,22 +316,14 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.namespaceinfo (account_id, namespace_name, salt, namespace_id) values (?, ?, ?, ?)")
                     .execute(Tuple.of(lReq.accountID.toHex(), namespaceName, salt, namespaceID.toHex()));
 
-            while (true) {
-                synchronized (insertFuture) {
-                    try {
-                        insertFuture.wait(500);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (insertFuture.succeeded()) {
-                    AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, namespaceID, lLogger);
-                    NsIdRegisterRsp nsIdRegisterRsp = sendRegisterNsIdRequest(instanceIdRsp, namespaceID, lReq.accountID, namespaceName, salt, lVertx, lLogger);
-                    updateAckOfNsName(nsIdRegisterRsp, lVertxMySQLClient, lLogger);
-                    return Future.succeededFuture(namespaceID);
-                } else {
-                    return Future.failedFuture(insertFuture.cause());
-                }
+            doWaitOnFuture(insertFuture);
+            if (insertFuture.succeeded()) {
+                AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, namespaceID, lLogger);
+                NsIdRegisterRsp nsIdRegisterRsp = sendRegisterNsIdRequest(instanceIdRsp, namespaceID, lReq.accountID, namespaceName, salt, lVertx, lLogger);
+                updateAckOfNsName(nsIdRegisterRsp, lVertxMySQLClient, lLogger);
+                return Future.succeededFuture(namespaceID);
+            } else {
+                return Future.failedFuture(insertFuture.cause());
             }
         }
     }
@@ -416,24 +351,20 @@ public class NameNodeUtils {
         Future<RowSet<Row>> future = lVertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (future) {
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            RowSet<Row> rows = future.result();
+            if (rows != null && rows.size() > 0) {
+                String idHexString = rows.iterator().next().getString("dir_id");
+                SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                return Future.succeededFuture(dirId);
+            } else {
+                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
             }
-            if (future.isComplete()) {
-                RowSet<Row> rows = future.result();
-                if (rows != null && rows.size() > 0) {
-                    String idHexString = rows.iterator().next().getString("dir_id");
-                    SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                    return Future.succeededFuture(dirId);
-                } else {
-                    return Future.failedFuture(future.cause());
-                }
-            }
+        }
+        else
+        {
+            return Future.failedFuture(future.cause());
         }
     }
 
@@ -448,6 +379,7 @@ public class NameNodeUtils {
 
     public static Future<SHA256Item> getDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<SHA256Item> existingDirIdFuture = checkDirId(lReq, lVertxMySQLClient, lLogger);
+        doWaitOnFuture(existingDirIdFuture);
         if (existingDirIdFuture.succeeded()) {
             return existingDirIdFuture;
         } else {
@@ -459,20 +391,12 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.directoryinfo (ns_id, parentdir_id, dir_name, salt, dir_id) values (?, ?, ?, ?, ?)")
                     .execute(Tuple.of(lReq.nsId.toHex(), (lReq.hasParentDir == 1?lReq.parentDirId.toHex():""), dirName, salt, dirId.toHex()));
 
-            while (true) {
-                synchronized (insertFuture) {
-                    try {
-                        insertFuture.wait(500);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (insertFuture.succeeded()) {
-                    registerDirId(dirId, lReq, salt, lVertxMySQLClient);
-                    return Future.succeededFuture(dirId);
-                } else {
-                    return Future.failedFuture(insertFuture.cause());
-                }
+            doWaitOnFuture(insertFuture);
+            if (insertFuture.succeeded()) {
+                registerDirId(dirId, lReq, salt, lVertxMySQLClient);
+                return Future.succeededFuture(dirId);
+            } else {
+                return Future.failedFuture(insertFuture.cause());
             }
         }
     }
@@ -482,19 +406,11 @@ public class NameNodeUtils {
         String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.directoryid_info (ns_id, parentdir_id, dir_name, salt, dir_id) values (?, ?, ?, ?, ?)")
                 .execute(Tuple.of(lReq.nsId.toHex(), (lReq.hasParentDir == 1?lReq.parentDirId.toHex():""), dirName, lSalt, lDirId.toHex()));
-        while (true) {
-            synchronized (insertFuture) {
-                try {
-                    insertFuture.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (insertFuture.succeeded()) {
-                return ;
-            } else {
-                return ;
-            }
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            return ;
+        } else {
+            return ;
         }
     }
 
@@ -506,24 +422,20 @@ public class NameNodeUtils {
         Future<RowSet<Row>> future = lVertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (future) {
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            RowSet<Row> rows = future.result();
+            if (rows != null && rows.size() > 0) {
+                String idHexString = rows.iterator().next().getString("file_id");
+                SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                return Future.succeededFuture(dirId);
+            } else {
+                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
             }
-            if (future.isComplete()) {
-                RowSet<Row> rows = future.result();
-                if (rows != null && rows.size() > 0) {
-                    String idHexString = rows.iterator().next().getString("file_id");
-                    SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                    return Future.succeededFuture(dirId);
-                } else {
-                    return Future.failedFuture(future.cause());
-                }
-            }
+        }
+        else
+        {
+            return Future.failedFuture(future.cause());
         }
     }
 
@@ -537,6 +449,7 @@ public class NameNodeUtils {
 
     public static Future<SHA256Item> getFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<SHA256Item> existingFileIdFuture = checkFileId(lReq, lVertxMySQLClient, lLogger);
+        doWaitOnFuture(existingFileIdFuture);
         if (existingFileIdFuture.succeeded()) {
             return existingFileIdFuture;
         } else {
@@ -548,21 +461,13 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.fileinfo (ns_id, parentdir_id, file_name, salt, file_id) values (?, ?, ?, ?, ?)")
                     .execute(Tuple.of(lReq.nsId.toHex(), lReq.parentDirId.toHex(), lReq.fileNameUtf8Bytes, salt, fileId.toHex()));
 
-            while (true) {
-                synchronized (insertFuture) {
-                    try {
-                        insertFuture.wait(500);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (insertFuture.succeeded()) {
-                    registerFileId(fileId, lReq, salt, lVertxMySQLClient);
-                    addFileVersion(fileId, lVertxMySQLClient);//adding file version
-                    return Future.succeededFuture(fileId);
-                } else {
-                    return Future.failedFuture(insertFuture.cause());
-                }
+            doWaitOnFuture(insertFuture);
+            if (insertFuture.succeeded()) {
+                registerFileId(fileId, lReq, salt, lVertxMySQLClient);
+                addFileVersion(fileId, lVertxMySQLClient);//adding file version
+                return Future.succeededFuture(fileId);
+            } else {
+                return Future.failedFuture(insertFuture.cause());
             }
         }
     }
@@ -571,19 +476,11 @@ public class NameNodeUtils {
     {
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.fileid_info (ns_id, parentdir_id, file_name, salt, file_id) values (?, ?, ?, ?, ?)")
                 .execute(Tuple.of(lReq.nsId.toHex(), lReq.parentDirId.toHex(), lReq.fileNameUtf8Bytes, lSalt, lFileId.toHex()));
-        while (true) {
-            synchronized (insertFuture) {
-                try {
-                    insertFuture.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (insertFuture.succeeded()) {
-                return ;
-            } else {
-                return ;
-            }
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            return ;
+        } else {
+            return ;
         }
     }
     public static void addFileVersion(SHA256Item lFileId, MySQLPool lVertxMySQLClient)
@@ -591,19 +488,11 @@ public class NameNodeUtils {
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_info (file_id, file_version) values (?, ?)")
                 .execute(Tuple.of(lFileId.toHex(), 0));
 
-        while (true) {
-            synchronized (insertFuture) {
-                try {
-                    insertFuture.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (insertFuture.succeeded()) {
-                return;//TODO:: return type need to be added to handle errors
-            } else {
-                return ;
-            }
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            return;//TODO:: return type need to be added to handle errors
+        } else {
+            return ;
         }
     }
     public static Future<String> getAndUpdateFileVersionNo(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
@@ -611,24 +500,20 @@ public class NameNodeUtils {
         Future<RowSet<Row>> future = lVertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (future) {
-                try {
-                    future.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+        doWaitOnFuture(future);
+        if (future.succeeded()) {
+            RowSet<Row> rows = future.result();
+            if (rows != null && rows.size() > 0) {
+                String fileVersionString = rows.iterator().next().getString("file_version");
+                updateFileVersion(lReq.fileId, fileVersionString, lVertxMySQLClient);
+                return Future.succeededFuture(fileVersionString);
             }
-            if (future.isComplete()) {
-                RowSet<Row> rows = future.result();
-                if (rows != null && rows.size() > 0) {
-                    String fileVersionString = rows.iterator().next().getString("file_version");
-                    updateFileVersion(lReq.fileId, fileVersionString, lVertxMySQLClient);
-                    Future.succeededFuture(fileVersionString);
-                }
-            } else {
-                return Future.failedFuture(future.cause());
+            else
+            {
+                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
             }
+        } else {
+            return Future.failedFuture(future.cause());
         }
     }
 
@@ -638,19 +523,11 @@ public class NameNodeUtils {
         Future<RowSet<Row>> updateFuture = lVertxMySQLClient
                 .query(sql)
                 .execute();
-        while (true) {
-            synchronized (updateFuture) {
-                try {
-                    updateFuture.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (updateFuture.isComplete() && updateFuture.succeeded()) {
-                return ;//TODO:: return type need to be added to handle errors
-            } else {
-                return ;
-            }
+        doWaitOnFuture(updateFuture);
+        if (updateFuture.succeeded()) {
+            return ;//TODO:: return type need to be added to handle errors
+        } else {
+            return ;
         }
     }
 
@@ -695,6 +572,7 @@ public class NameNodeUtils {
 
     public static Future<SHA256Item> getFileVersionId(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<String> fileVersionFuture = getAndUpdateFileVersionNo(lReq, lVertxMySQLClient, lLogger);
+        doWaitOnFuture(fileVersionFuture);
         if (fileVersionFuture.succeeded()) {
             String fileVersion = fileVersionFuture.result();
             String salt = Long.toHexString(System.nanoTime());
@@ -703,20 +581,12 @@ public class NameNodeUtils {
             Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_id_info (file_id, version, salt, file_version_id) values (?, ?, ?, ?)")
                     .execute(Tuple.of(lReq.fileId.toHex(), fileVersion, salt, fileVersionId.toHex()));
 
-            while (true) {
-                synchronized (insertFuture) {
-                    try {
-                        insertFuture.wait(500);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                }
-                if (insertFuture.succeeded()) {
-                    registerFileVersionId(fileVersionId, lReq, fileVersion, salt, lVertxMySQLClient);
-                    return Future.succeededFuture(fileVersionId);
-                } else {
-                    return Future.failedFuture(insertFuture.cause());
-                }
+            doWaitOnFuture(insertFuture);
+            if (insertFuture.succeeded()) {
+                registerFileVersionId(fileVersionId, lReq, fileVersion, salt, lVertxMySQLClient);
+                return Future.succeededFuture(fileVersionId);
+            } else {
+                return Future.failedFuture(insertFuture.cause());
             }
         } else {
             return Future.failedFuture(fileVersionFuture.cause());
@@ -727,19 +597,11 @@ public class NameNodeUtils {
     {
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.file_version_id_r_info (file_id, version, salt, file_version_id) values (?, ?, ?, ?)")
                 .execute(Tuple.of(lReq.fileId.toHex(), lFileVersion, lSalt, lFileVersionId.toHex()));
-        while (true) {
-            synchronized (insertFuture) {
-                try {
-                    insertFuture.wait(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (insertFuture.succeeded()) {
-                return ;
-            } else {
-                return ;
-            }
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            return ;
+        } else {
+            return ;
         }
     }
 }
