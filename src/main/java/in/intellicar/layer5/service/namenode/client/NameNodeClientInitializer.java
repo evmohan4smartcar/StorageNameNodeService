@@ -13,9 +13,9 @@ public class NameNodeClientInitializer extends ChannelInitializer<SocketChannel>
     private Vertx vertx;
     private Logger logger;
 
-    public NameNodeClientInitializer(Vertx Vertx, Logger lLogger) {
+    public NameNodeClientInitializer(Vertx lVertx, Logger lLogger) {
         this.logger = lLogger;
-        this.vertx = vertx;
+        this.vertx = lVertx;
     }
 
     @Override

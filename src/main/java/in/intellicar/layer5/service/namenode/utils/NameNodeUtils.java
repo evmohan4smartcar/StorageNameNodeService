@@ -40,13 +40,12 @@ public class NameNodeUtils {
         AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(lIdToBeMatched);
         //StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
 
-        NameNodeClient client = new NameNodeClient("192.168.0.116", 10107, lVertx, logger);
-        client.startClient();
+        NameNodeClient client = new NameNodeClient("localhost", 10107, lVertx, logger);
         Thread clientThread = new Thread(client);
         clientThread.start();
         AssociatedInstanceIdRsp resultValue = null;
         try {
-            Thread.sleep(1000);
+            Thread.sleep(5000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
@@ -178,7 +177,7 @@ public class NameNodeUtils {
     }
 
     public static Future<SHA256Item> getAccountID(AccIdGenerateReq req, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
-        String accountName = LittleEndianUtils.printHexArray(req.accNameUtf8Bytes);
+        String accountName = new String(req.accNameUtf8Bytes, StandardCharsets.UTF_8);
         Future<SHA256Item> checkedAccountIDFuture = checkAccountID(accountName, vertxMySQLClient, logger);
         doWaitOnFuture(checkedAccountIDFuture);
         if (checkedAccountIDFuture.succeeded()) {
@@ -206,7 +205,7 @@ public class NameNodeUtils {
     public static Future<AccIdRegisterRsp> registerAccountID(AccIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
         String accountName = new String(lReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
         String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
-        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.account_id_info (account_id, account_name, salt, ack) values (?, ?, ?, ?)")
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.account_id_info (account_id, account_name, salt) values (?, ?, ?)")
                 .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString, 0));
 
         doWaitOnFuture(insertFuture);
