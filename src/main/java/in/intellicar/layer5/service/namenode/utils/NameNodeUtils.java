@@ -44,6 +44,7 @@ public class NameNodeUtils {
         client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
+        AssociatedInstanceIdRsp resultValue = null;
         try {
             Thread.sleep(1000);
         } catch (InterruptedException e) {
@@ -62,25 +63,43 @@ public class NameNodeUtils {
                     e.printStackTrace();
                 }
             }
-            if (future.succeeded()) {
+            if(future.isComplete()) {
+                if (future.succeeded()) {
+                    resultValue = (AssociatedInstanceIdRsp) future.result().body();
+                    break;
+                } else {
+                    Throwable cause = future.cause();
+                    ;
+                    if (cause != null)
+                        logger.info("getInstanceId failed with error: " + cause.getMessage());
+                    else
+                        logger.info("getInstanceID failed");
+                    resultValue = null;
+                }
+            }
+
+        }
+        try {
+            clientThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        return resultValue;
+    }
+
+    private static <T> void doWaitOnFuture(Future<T> lFuture)
+    {
+        while (true) {
+            synchronized (lFuture) {
+
                 try {
-                    clientThread.join();
+                    lFuture.wait(500);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-                return (AssociatedInstanceIdRsp) future.result().body();
-            } else {
-                try {
-                    clientThread.join();
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-                Throwable cause = future.cause();;
-                if(cause != null)
-                    logger.info("getInstanceId failed with error: " + cause.getMessage());
-                else
-                    logger.info("getInstanceID failed");
-                return null;
+            }
+            if(lFuture.isComplete()) {
+                return;
             }
         }
     }
@@ -173,6 +192,22 @@ public class NameNodeUtils {
         }
     }
 
+    private static void updateAckOfAccName(AccIdRegisterRsp lRsp, MySQLPool lVertxMySQLClient, Logger logger)
+    {
+        String accName = new String(lRsp.accIdRegisterReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
+        String sql = "Update accounts.account_info set ack = '"+ lRsp.ackFlag +"' where account_name = '" + accName + "'";
+        Future<RowSet<Row>> updateFuture = lVertxMySQLClient
+                .query(sql)
+                .execute();
+
+      doWaitOnFuture(updateFuture);
+        if (updateFuture.succeeded()) {
+            return ;//TODO:: return type need to be added to handle errors
+        } else {
+            return ;
+        }
+    }
+
     public static Future<SHA256Item> getAccountID(AccIdGenerateReq req, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
         String accountName = LittleEndianUtils.printHexArray(req.accNameUtf8Bytes);
 
@@ -199,6 +234,7 @@ public class NameNodeUtils {
                 if (insertFuture.succeeded()) {
                     AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
                     AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
+                    updateAckOfAccName(accIdRegisterRsp, vertxMySQLClient, logger);
                     return Future.succeededFuture(accountIDSHA);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
@@ -207,16 +243,20 @@ public class NameNodeUtils {
         }
     }
 
-    //TODO
-    public static Future<AccIdRegisterRsp> registerAccountID(AccIdRegisterReq req,  MySQLPool vertxMySQLClient, Logger logger){
-        return null;
+    public static Future<AccIdRegisterRsp> registerAccountID(AccIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
+        String accountName = new String(lReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
+        String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.account_id_info (account_id, account_name, salt, ack) values (?, ?, ?, ?)")
+                .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString, 0));
+
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            AccIdRegisterRsp accIdRegisterRsp = new AccIdRegisterRsp(lReq, 1);
+            return Future.succeededFuture(accIdRegisterRsp);
+        } else {
+            return Future.failedFuture(insertFuture.cause());
+        }
     }
-
-
-    public static Future<Integer> getAck() {
-        return Future.succeededFuture(1);
-    }
-
 
     public static Future<SHA256Item> checkNamespaceId(NsIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger) {
         String namespaceName = new String(req.namespaceBytes, StandardCharsets.UTF_8);
@@ -304,6 +344,23 @@ public class NameNodeUtils {
         }
     }
 
+    private static void updateAckOfNsName(NsIdRegisterRsp lRsp, MySQLPool lVertxMySQLClient, Logger logger)
+    {
+        String nsName = new String(lRsp.nsIdRegisterReq.nsNameUtf8Bytes, StandardCharsets.UTF_8);
+        String sql = "Update accounts.namespaceinfo set ack = '"+ lRsp.ackFlag +"' where namespace_name = '" + nsName +
+                "' and account_id = '" + lRsp.nsIdRegisterReq.accountId.toHex();
+        Future<RowSet<Row>> updateFuture = lVertxMySQLClient
+                .query(sql)
+                .execute();
+
+        doWaitOnFuture(updateFuture);
+        if (updateFuture.succeeded()) {
+            return ;//TODO:: return type need to be added to handle errors
+        } else {
+            return ;
+        }
+    }
+
     public static Future<SHA256Item> getNamespaceId(NsIdGenerateReq lReq, Vertx lVertx, MySQLPool lVertxMySQLClient, Logger lLogger) {
         Future<SHA256Item> existingNsIdFuture = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
         if (existingNsIdFuture.succeeded()) {
@@ -327,6 +384,7 @@ public class NameNodeUtils {
                 if (insertFuture.succeeded()) {
                     AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, namespaceID, lLogger);
                     NsIdRegisterRsp nsIdRegisterRsp = sendRegisterNsIdRequest(instanceIdRsp, namespaceID, lReq.accountID, namespaceName, salt, lVertx, lLogger);
+                    updateAckOfNsName(nsIdRegisterRsp, lVertxMySQLClient, lLogger);
                     return Future.succeededFuture(namespaceID);
                 } else {
                     return Future.failedFuture(insertFuture.cause());
@@ -334,6 +392,22 @@ public class NameNodeUtils {
             }
         }
     }
+
+    public static Future<NsIdRegisterRsp> registerNsId(NsIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
+        String nsName = new String(lReq.nsNameUtf8Bytes, StandardCharsets.UTF_8);
+        String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.namespace_id_info (namespace_id, account_id, namespace_name, salt) values (?, ?, ?, ?)")
+                .execute(Tuple.of(lReq.nsId.toHex(), lReq.accountId.toHex(), nsName, saltString));
+
+        doWaitOnFuture(insertFuture);
+        if (insertFuture.succeeded()) {
+            NsIdRegisterRsp nsIdRegisterRsp = new NsIdRegisterRsp(lReq, 1);
+            return Future.succeededFuture(nsIdRegisterRsp);
+        } else {
+            return Future.failedFuture(insertFuture.cause());
+        }
+    }
+
     public static Future<SHA256Item> checkDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
         String sql = "SELECT dir_id from accounts.directoryinfo where ns_id = '" + lReq.nsId.toHex() +
