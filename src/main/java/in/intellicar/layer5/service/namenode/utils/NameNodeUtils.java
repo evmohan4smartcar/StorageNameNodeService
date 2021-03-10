@@ -125,15 +125,14 @@ public class NameNodeUtils {
         AccIdRegisterReq accIdRegReq = new AccIdRegisterReq(lAccId, lAccName.getBytes(StandardCharsets.UTF_8), lSalt.getBytes(StandardCharsets.UTF_8));
         byte[] ipBytes = lInstanceIdRsp.ip;
 
-        String ipString = Integer.toString(((int)ipBytes[0])) + "." + Integer.toString(((int)ipBytes[1])) + "." +
-                Integer.toString(((int)ipBytes[2])) + "." + Integer.toString(((int)ipBytes[3]));
+        String ipString = Byte.toUnsignedInt(ipBytes[0]) + "." + Byte.toUnsignedInt(ipBytes[1]) + "." +
+                Byte.toUnsignedInt(ipBytes[2]) + "." + Byte.toUnsignedInt(ipBytes[3]);
         NameNodeClient client = new NameNodeClient(ipString, lInstanceIdRsp.port, lVertx, lLogger);
-        client.startClient();
         Thread clientThread = new Thread(client);
         clientThread.start();
         AccIdRegisterRsp returnValue = null;
         try {
-            Thread.sleep(1000);
+            Thread.sleep(5000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
