@@ -88,7 +88,7 @@ public class NameNodePayloadHandler implements IPayloadRequestHandler {
                 if(fileVersionIdFuture.isComplete() && fileVersionIdFuture.succeeded())
                 {
                     SHA256Item fileVersionId = fileVersionIdFuture.result();
-                    return new FileIdGenerateAndRegisterRsp((FileIdGenerateAndRegisterReq) lRequestPayload, fileVersionId);
+                    return new FileVersionIdGenerateAndRegisterRsp((FileVersionIdGenerateAndRegisterReq) lRequestPayload, fileVersionId);
                 }
                 return new StorageClsMetaErrorRsp(fileVersionIdFuture.cause().getMessage(), lRequestPayload);
 
