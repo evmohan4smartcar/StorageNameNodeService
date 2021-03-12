@@ -40,14 +40,13 @@ public class NameNodeUtils {
         String ipString = "";
         if(lIpBytes.length == 4)
             ipString = Byte.toUnsignedInt(lIpBytes[0]) + "." + Byte.toUnsignedInt(lIpBytes[1]) + "." +
-                    Byte.toUnsignedInt(lIpBytes[2]) + "." + Byte.toUnsignedInt(lIpBytes[3]);;
+                    Byte.toUnsignedInt(lIpBytes[2]) + "." + Byte.toUnsignedInt(lIpBytes[3]);
         return ipString;
     }
 
     private static Thread setUpAndStartClient(String lIpString, int lPort, Vertx lVertx, String lConsumerName, Logger lLogger) {
         NameNodeClient client = new NameNodeClient(lIpString, lPort, lVertx, null, lLogger);
         Thread clientThread = new Thread(client);
-        AssociatedInstanceIdRsp returnValue = null;
         EventBus eventBus = lVertx.eventBus();
         eventBus.consumer(lConsumerName, (Handler<Message<StorageClsMetaPayload>>) event -> {
             client.setEvent(event);
@@ -76,12 +75,10 @@ public class NameNodeUtils {
             returnValue = (AssociatedInstanceIdRsp) future.result().body();
         } else {
             Throwable cause = future.cause();
-            ;
             if (cause != null)
                 logger.info("getInstanceId failed with error: " + cause.getMessage());
             else
                 logger.info("getInstanceID failed");
-            returnValue = null;
         }
         try {
             clientThread.join();
@@ -183,7 +180,7 @@ public class NameNodeUtils {
         if (future.succeeded()) {
             returnValue = (AccIdRegisterRsp) future.result().body();
         } else {
-            Throwable cause = future.cause();;
+            Throwable cause = future.cause();
             if(cause != null)
                 lLogger.info("getInstanceId failed with error: " + cause.getMessage());
             else
@@ -308,11 +305,11 @@ public class NameNodeUtils {
         if (future.succeeded()) {
             returnValue = (NsIdRegisterRsp) future.result().body();
         } else {
-            Throwable cause = future.cause();;
+            Throwable cause = future.cause();
             if(cause != null)
                 lLogger.info("getInstanceId failed with error: " + cause.getMessage());
             else
-                lLogger.info("getInstanceID failed");;
+                lLogger.info("getInstanceID failed");
         }
         try {
             clientThread.join();
