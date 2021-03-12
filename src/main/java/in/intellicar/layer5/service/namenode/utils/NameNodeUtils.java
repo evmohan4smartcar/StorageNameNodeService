@@ -34,6 +34,14 @@ public class NameNodeUtils {
     private static final String ZOOKEEPER_IP = "localhost";
     private static final int ZOOKEEPER_PORT = 10107;
     // Utility Functions
+    private static String getIpFromBytes(byte[] lIpBytes)
+    {
+        String ipString = "";
+        if(lIpBytes.length == 4)
+            ipString = Byte.toUnsignedInt(lIpBytes[0]) + "." + Byte.toUnsignedInt(lIpBytes[1]) + "." +
+                    Byte.toUnsignedInt(lIpBytes[2]) + "." + Byte.toUnsignedInt(lIpBytes[3]);;
+        return ipString;
+    }
     /*
     TODO: Client End
     1. Get InstanceId corresponding to accountName
@@ -159,12 +167,9 @@ public class NameNodeUtils {
     public static AccIdRegisterRsp sendRegisterAccountIdRequest(AssociatedInstanceIdRsp lInstanceIdRsp, SHA256Item lAccId, String lAccName, String lSalt, Vertx lVertx, Logger lLogger)
     {
         AccIdRegisterReq accIdRegReq = new AccIdRegisterReq(lAccId, lAccName.getBytes(StandardCharsets.UTF_8), lSalt.getBytes(StandardCharsets.UTF_8));
-        byte[] ipBytes = lInstanceIdRsp.ip;
-
-        String ipString = Byte.toUnsignedInt(ipBytes[0]) + "." + Byte.toUnsignedInt(ipBytes[1]) + "." +
-                Byte.toUnsignedInt(ipBytes[2]) + "." + Byte.toUnsignedInt(ipBytes[3]);
-
+        String ipString = getIpFromBytes(lInstanceIdRsp.ip);
         String consumerName = CONSUMER_NAME_PREFIX + _consumerAddressSuffix.getAndIncrement();
+
         NameNodeClient client = new NameNodeClient(ipString, lInstanceIdRsp.port, lVertx, consumerName, lLogger);
         Thread clientThread = new Thread(client);
         clientThread.start();
@@ -286,11 +291,9 @@ public class NameNodeUtils {
     public static NsIdRegisterRsp sendRegisterNsIdRequest(AssociatedInstanceIdRsp lInstanceIdRsp, SHA256Item lNsId, SHA256Item lAccId, String lNsName, String lSalt, Vertx lVertx, Logger lLogger)
     {
         NsIdRegisterReq nsIdRegReq = new NsIdRegisterReq(lNsId, lAccId, lNsName.getBytes(StandardCharsets.UTF_8), lSalt.getBytes(StandardCharsets.UTF_8));
-        byte[] ipBytes = lInstanceIdRsp.ip;
-
-        String ipString = Integer.toString(((int)ipBytes[0])) + "." + Integer.toString(((int)ipBytes[1])) + "." +
-                Integer.toString(((int)ipBytes[2])) + "." + Integer.toString(((int)ipBytes[3]));
+        String ipString = getIpFromBytes(lInstanceIdRsp.ip);
         String consumerName = CONSUMER_NAME_PREFIX + _consumerAddressSuffix.getAndIncrement();
+
         NameNodeClient client = new NameNodeClient(ipString, lInstanceIdRsp.port, lVertx, consumerName, lLogger);
         client.startClient();
         Thread clientThread = new Thread(client);
