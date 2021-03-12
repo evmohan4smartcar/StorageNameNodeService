@@ -223,23 +223,31 @@ public class NameNodeUtils {
         String accountName = new String(req.accNameUtf8Bytes, StandardCharsets.UTF_8);
         Future<SHA256Item> checkedAccountIDFuture = checkAccountID(accountName, vertxMySQLClient, logger);
         doWaitOnFuture(checkedAccountIDFuture);
-        if (checkedAccountIDFuture.succeeded()) {
-            return checkedAccountIDFuture;
-        } else {
-            String salt = Long.toHexString(System.nanoTime());
-            SHA256Item accountIDSHA = generateAccountId(req.accNameUtf8Bytes, salt.getBytes());
+        String salt = Long.toHexString(System.nanoTime());
+        SHA256Item accountIDSHA = null;
+        AssociatedInstanceIdRsp instanceIdRsp = null;
 
+        if (checkedAccountIDFuture.succeeded()) {
+            accountIDSHA =  checkedAccountIDFuture.result();
+            instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
+            AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
+            updateAckOfAccName(accIdRegisterRsp, vertxMySQLClient, logger);
+            return Future.succeededFuture(accountIDSHA);
+        }
+        else {
+            accountIDSHA = generateAccountId(req.accNameUtf8Bytes, salt.getBytes());
             //TODO: Update db.table_name
             Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
                     .execute(Tuple.of(accountName, salt, accountIDSHA.toHex(), 0));
 
             doWaitOnFuture(insertFuture);
             if (insertFuture.succeeded()) {
-                AssociatedInstanceIdRsp instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
+                instanceIdRsp = getInstanceID(lVertx, accountIDSHA, logger);
                 AccIdRegisterRsp accIdRegisterRsp = sendRegisterAccountIdRequest(instanceIdRsp, accountIDSHA, accountName, salt, lVertx, logger);
                 updateAckOfAccName(accIdRegisterRsp, vertxMySQLClient, logger);
                 return Future.succeededFuture(accountIDSHA);
-            } else {
+            }
+            else {
                 return Future.failedFuture(insertFuture.cause());
             }
         }
@@ -248,7 +256,7 @@ public class NameNodeUtils {
     public static Future<AccIdRegisterRsp> registerAccountID(AccIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
         String accountName = new String(lReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
         String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
-        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT INTO accounts.account_id_info (account_id, account_name, salt) values (?, ?, ?)")
+        Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT IGNORE INTO accounts.account_id_info (account_id, account_name, salt) values (?, ?, ?)")
                 .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString));
 
         doWaitOnFuture(insertFuture);
