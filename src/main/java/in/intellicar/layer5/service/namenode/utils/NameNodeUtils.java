@@ -1,6 +1,7 @@
 package in.intellicar.layer5.service.namenode.utils;
 
 import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaPayload;
+import in.intellicar.layer5.beacon.storagemetacls.payload.StorageClsMetaErrorRsp;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdReq;
 import in.intellicar.layer5.beacon.storagemetacls.payload.metaclsservice.AssociatedInstanceIdRsp;
 import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.client.*;
@@ -93,12 +94,12 @@ public class NameNodeUtils {
         AssociatedInstanceIdReq req = new AssociatedInstanceIdReq(lIdToBeMatched);
         //StorageClsMetaBeacon beacon = new StorageClsMetaBeacon(seqID, req);
         String consumerName = CONSUMER_NAME_PREFIX + _consumerAddressSuffix.getAndIncrement();
-        AssociatedInstanceIdRsp returnValue = null;
 
         Thread clientThread = setUpAndStartClient(ZOOKEEPER_IP, ZOOKEEPER_PORT, lVertx, consumerName, logger);
 
         EventBus eventBus = lVertx.eventBus();
         eventBus.request(consumerName, req, lCallback);
+        //TODO:: not making sure, death of thread; join need to be takencare
     }
 
     private static <T> void doWaitOnFuture(Future<T> lFuture) {
@@ -147,8 +148,9 @@ public class NameNodeUtils {
         }
     }
 
-    public static Future<SHA256Item> checkAccountID(String accountName, MySQLPool vertxMySQLClient, Logger logger) {
+    public static SHA256Item checkAccountID(String accountName, MySQLPool vertxMySQLClient, Logger logger) {
 
+        SHA256Item returnValue = null;
         //TODO update db.table_name
         String sql = "SELECT account_id from accounts.account_info where account_name = '" + accountName + "'";
         Future<RowSet<Row>> future = vertxMySQLClient
@@ -160,15 +162,15 @@ public class NameNodeUtils {
             RowSet<Row> rows = future.result();
             if (rows != null && rows.size() > 0) {
                 String hexID = rows.iterator().next().getString("account_id"); // TODO update column name
-                SHA256Item accountIDSHA = new SHA256Item(LittleEndianUtils.hexStringToByteArray(hexID));
-                return Future.succeededFuture(accountIDSHA);
+                returnValue = new SHA256Item(LittleEndianUtils.hexStringToByteArray(hexID));
             } else {
-                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
+                logger.info("succeeded, but rows aren't correct");
             }
         }
         else {
-            return Future.failedFuture(future.cause());
+            logger.info("checkAccountID failed with an error: " + future.cause().getMessage());
         }
+        return returnValue;
     }
 
     public static SHA256Item generateAccountId(byte[] nameBytes, byte[] saltBytes) {
@@ -182,12 +184,12 @@ public class NameNodeUtils {
         AccIdRegisterReq accIdRegReq = new AccIdRegisterReq(lAccIdGenRsp.accountID, lAccIdGenRsp.accIdGenerateReq.accNameUtf8Bytes, ((IActAsClient)lAccIdGenRsp).getSalt().getBytes(StandardCharsets.UTF_8));
         String ipString = getIpFromBytes(lInstanceIdRsp.ip);
         String consumerName = CONSUMER_NAME_PREFIX + _consumerAddressSuffix.getAndIncrement();
-        AccIdRegisterRsp returnValue = null;
 
         Thread clientThread = setUpAndStartClient(ipString, lInstanceIdRsp.port, lVertx, consumerName, lLogger);
 
         EventBus eventBus = lVertx.eventBus();
         eventBus.request(consumerName, accIdRegReq, lCallback);
+        //TODO:: not making sure, death of thread; join need to be takencare
     }
 
     public static AccIdRegisterRsp sendRegisterAccountIdRequest(AssociatedInstanceIdRsp lInstanceIdRsp, SHA256Item lAccId, String lAccName, String lSalt, Vertx lVertx, Logger lLogger) {
@@ -235,12 +237,12 @@ public class NameNodeUtils {
         }
     }
 
-    public static Future<AccIdGenerateRsp> getAccountID(AccIdGenerateReq lReq, Vertx lVertx, MySQLPool vertxMySQLClient, Logger logger){
+    public static StorageClsMetaPayload getAccountID(AccIdGenerateReq lReq, MySQLPool vertxMySQLClient, Logger logger){
         String accountName = new String(lReq.accNameUtf8Bytes, StandardCharsets.UTF_8);
-        Future<SHA256Item> checkedAccountIDFuture = checkAccountID(accountName, vertxMySQLClient, logger);
-        doWaitOnFuture(checkedAccountIDFuture);
-        if (checkedAccountIDFuture.succeeded()) {
-            return Future.succeededFuture(new AccIdGenerateRsp(lReq, checkedAccountIDFuture.result()));
+        StorageClsMetaPayload returnValue = null;
+        SHA256Item checkedAccountId = checkAccountID(accountName, vertxMySQLClient, logger);
+        if (checkedAccountId!= null) {
+            returnValue = new AccIdGenerateRsp(lReq, checkedAccountId);
         } else {
             String salt = Long.toHexString(System.nanoTime());
             SHA256Item accountIDSHA = generateAccountId(lReq.accNameUtf8Bytes, salt.getBytes());
@@ -271,31 +273,39 @@ public class NameNodeUtils {
                 AccIdGenerateRsp accIdGenerateRsp = new AccIdGenerateRsp(lReq, accountIDSHA);
                 accIdGenerateRsp.isToBeRegistered(true);
                 accIdGenerateRsp.setSalt(salt);
-                return Future.succeededFuture(accIdGenerateRsp);
+                returnValue = accIdGenerateRsp;
             }
             else {
-                return Future.failedFuture(insertFuture.cause());
+                Throwable cause = insertFuture.cause();
+                logger.info("getAccountID failed with an error: " + cause.getMessage());
+                returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
             }
         }
+        return returnValue;
     }
 
-    public static Future<AccIdRegisterRsp> registerAccountID(AccIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
+    public static StorageClsMetaPayload registerAccountID(AccIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
         String accountName = new String(lReq.accountNameUtf8Bytes, StandardCharsets.UTF_8);
         String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
+        StorageClsMetaPayload returnValue = null;
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT IGNORE INTO accounts.account_id_info (account_id, account_name, salt) values (?, ?, ?)")
                 .execute(Tuple.of(lReq.accountId.toHex(), accountName, saltString));
 
         doWaitOnFuture(insertFuture);
         if (insertFuture.succeeded()) {
             AccIdRegisterRsp accIdRegisterRsp = new AccIdRegisterRsp(lReq, 1);
-            return Future.succeededFuture(accIdRegisterRsp);
+            returnValue = accIdRegisterRsp;
         } else {
-            return Future.failedFuture(insertFuture.cause());
+            Throwable cause = insertFuture.cause();
+            lLogger.info("registerAccountID failed with an error: " + cause.getMessage());
+            returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
         }
+        return returnValue;
     }
 
-    public static Future<SHA256Item> checkNamespaceId(NsIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger) {
+    public static SHA256Item checkNamespaceId(NsIdGenerateReq req, MySQLPool vertxMySQLClient, Logger logger) {
         String namespaceName = new String(req.namespaceBytes, StandardCharsets.UTF_8);
+        SHA256Item returnValue = null;
         String sql = "SELECT namespace_id from accounts.namespaceinfo where namespace_name = '" + namespaceName + "' and account_id = '" + req.accountID.toHex() + "'";
         Future<RowSet<Row>> future = vertxMySQLClient
                 .query(sql)
@@ -306,14 +316,16 @@ public class NameNodeUtils {
             if (rows != null && rows.size() > 0) {
                 String idHexString = rows.iterator().next().getString("namespace_id");
                 SHA256Item namespaceID = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                return Future.succeededFuture(namespaceID);
+                returnValue = namespaceID;
             } else {
-                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
+                logger.info("checkNamespaceId succeeded, but rows aren't correct");
             }
         }
         else{
-            return Future.failedFuture(future.cause());
+            Throwable cause = future.cause();
+            logger.info("checkNamespaceId failed with an error: " + cause.getMessage());
         }
+        return returnValue;
     }
 
     public static SHA256Item generateNamespaceId(byte[] accountIDbytes, byte[] nameBytes, byte[] salt) {
@@ -327,12 +339,12 @@ public class NameNodeUtils {
         NsIdRegisterReq nsIdRegReq = new NsIdRegisterReq(lNsIdGenRsp.namespaceID, lNsIdGenRsp.nsIdGenerateReq.accountID, lNsIdGenRsp.nsIdGenerateReq.namespaceBytes, ((IActAsClient)lNsIdGenRsp).getSalt().getBytes(StandardCharsets.UTF_8));
         String ipString = getIpFromBytes(lInstanceIdRsp.ip);
         String consumerName = CONSUMER_NAME_PREFIX + _consumerAddressSuffix.getAndIncrement();
-        NsIdRegisterRsp returnValue = null;
 
         Thread clientThread = setUpAndStartClient(ipString, lInstanceIdRsp.port, lVertx, consumerName, lLogger);
 
         EventBus eventBus = lVertx.eventBus();
         eventBus.request(consumerName, nsIdRegReq, lCallback);
+        //TODO:: not making sure, death of thread; join need to be takencare
     }
 
     public static NsIdRegisterRsp sendRegisterNsIdRequest(AssociatedInstanceIdRsp lInstanceIdRsp, SHA256Item lNsId, SHA256Item lAccId, String lNsName, String lSalt, Vertx lVertx, Logger lLogger) {
@@ -380,11 +392,11 @@ public class NameNodeUtils {
         }
     }
 
-    public static Future<NsIdGenerateRsp> getNamespaceId(NsIdGenerateReq lReq, Vertx lVertx, MySQLPool lVertxMySQLClient, Logger lLogger) {
-        Future<SHA256Item> existingNsIdFuture = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
-        doWaitOnFuture(existingNsIdFuture);
-        if (existingNsIdFuture.succeeded()) {
-            return Future.succeededFuture(new NsIdGenerateRsp(lReq, existingNsIdFuture.result()));
+    public static StorageClsMetaPayload getNamespaceId(NsIdGenerateReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        SHA256Item existingNsId = checkNamespaceId(lReq, lVertxMySQLClient, lLogger);
+        StorageClsMetaPayload returnValue = null;
+        if (existingNsId != null) {
+            returnValue = new NsIdGenerateRsp(lReq, existingNsId);
         } else {
             String namespaceName = new String(lReq.namespaceBytes, StandardCharsets.UTF_8);
             String salt = Long.toHexString(System.nanoTime());
@@ -401,30 +413,38 @@ public class NameNodeUtils {
                 NsIdGenerateRsp nsIdGenerateRsp = new NsIdGenerateRsp(lReq, namespaceID);
                 nsIdGenerateRsp.isToBeRegistered(true);
                 nsIdGenerateRsp.setSalt(salt);
-                return Future.succeededFuture(nsIdGenerateRsp);
+                returnValue = nsIdGenerateRsp;
             } else {
-                return Future.failedFuture(insertFuture.cause());
+                Throwable cause = insertFuture.cause();
+                lLogger.info("getNamespaceId failed with an error: " + cause.getMessage());
+                returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
             }
         }
+        return  returnValue;
     }
 
-    public static Future<NsIdRegisterRsp> registerNsId(NsIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
+    public static StorageClsMetaPayload registerNsId(NsIdRegisterReq lReq,  MySQLPool lVertxMySQLClient, Logger lLogger){
         String nsName = new String(lReq.nsNameUtf8Bytes, StandardCharsets.UTF_8);
         String saltString = new String(lReq.saltBytes, StandardCharsets.UTF_8);
+        StorageClsMetaPayload returnValue = null;
         Future<RowSet<Row>> insertFuture = lVertxMySQLClient.preparedQuery("INSERT IGNORE INTO accounts.namespace_id_info (namespace_id, account_id, namespace_name, salt) values (?, ?, ?, ?)")
                 .execute(Tuple.of(lReq.nsId.toHex(), lReq.accountId.toHex(), nsName, saltString));
 
         doWaitOnFuture(insertFuture);
         if (insertFuture.succeeded()) {
             NsIdRegisterRsp nsIdRegisterRsp = new NsIdRegisterRsp(lReq, 1);
-            return Future.succeededFuture(nsIdRegisterRsp);
+            returnValue = nsIdRegisterRsp;
         } else {
-            return Future.failedFuture(insertFuture.cause());
+            Throwable cause = insertFuture.cause();
+            lLogger.info("registerNsId failed with an error: " + cause.getMessage());
+            returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
         }
+        return returnValue;
     }
 
-    public static Future<SHA256Item> checkDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+    public static SHA256Item checkDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
+        SHA256Item returnValue = null;
         String sql = "SELECT dir_id from accounts.dir_info where namespace_id = '" + lReq.nsId.toHex() +
                 "' and parent_dir_id = '" + (lReq.hasParentDir == 1 ? lReq.parentDirId.toHex(): "") +
                 "' and dir_name = '" + dirName + "'";
@@ -437,15 +457,16 @@ public class NameNodeUtils {
             if (rows != null && rows.size() > 0) {
                 String idHexString = rows.iterator().next().getString("dir_id");
                 SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                return Future.succeededFuture(dirId);
+                returnValue = dirId;
             } else {
-                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
+                lLogger.info("checkDirId succeeded, but rows aren't correct");
             }
         }
-        else
-        {
-            return Future.failedFuture(future.cause());
+        else{
+            Throwable cause = future.cause();
+            lLogger.info("checkDirId failed with an error: " + cause.getMessage());
         }
+        return returnValue;
     }
 
     public static SHA256Item generateDirId(byte[] lNsIdBytes, boolean lHasParentDir, byte[] lParentDirid, byte[] lDirNameBytes, byte[] salt) {
@@ -457,10 +478,11 @@ public class NameNodeUtils {
         return generateIdForPath(pathArray, salt);
     }
 
-    public static Future<SHA256Item> getDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
-        Future<SHA256Item> existingDirIdFuture = checkDirId(lReq, lVertxMySQLClient, lLogger);
-        if (existingDirIdFuture.succeeded()) {
-            return existingDirIdFuture;
+    public static StorageClsMetaPayload getDirId(DirIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        StorageClsMetaPayload returnValue = null;
+        SHA256Item existingDirId = checkDirId(lReq, lVertxMySQLClient, lLogger);
+        if (existingDirId != null) {
+            returnValue = new DirIdGenerateAndRegisterRsp(lReq, existingDirId);
         } else {
             String dirName = new String(lReq.dirNameUtf8Bytes, StandardCharsets.UTF_8);
             String salt = Long.toHexString(System.nanoTime());
@@ -473,11 +495,14 @@ public class NameNodeUtils {
             doWaitOnFuture(insertFuture);
             if (insertFuture.succeeded()) {
                 registerDirId(dirId, lReq, salt, lVertxMySQLClient);
-                return Future.succeededFuture(dirId);
+                returnValue = new DirIdGenerateAndRegisterRsp(lReq, dirId);
             } else {
-                return Future.failedFuture(insertFuture.cause());
+                Throwable cause = insertFuture.cause();
+                lLogger.info("getDirId failed with an error: " + cause.getMessage());
+                returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
             }
         }
+        return returnValue;
     }
 
     public static void registerDirId(SHA256Item lDirId, DirIdGenerateAndRegisterReq lReq, String lSalt, MySQLPool lVertxMySQLClient) {
@@ -492,8 +517,9 @@ public class NameNodeUtils {
         }
     }
 
-    public static Future<SHA256Item> checkFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+    public static SHA256Item checkFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
         String fileName = new String(lReq.fileNameUtf8Bytes, StandardCharsets.UTF_8);
+        SHA256Item returnValue = null;
         String sql = "SELECT file_id from accounts.file_info where namespace_id = '" + lReq.nsId.toHex() +
                 "' and parent_dir_id = '" + lReq.parentDirId.toHex() +
                 "' and file_name = '" + fileName + "'";
@@ -505,16 +531,17 @@ public class NameNodeUtils {
             RowSet<Row> rows = future.result();
             if (rows != null && rows.size() > 0) {
                 String idHexString = rows.iterator().next().getString("file_id");
-                SHA256Item dirId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
-                return Future.succeededFuture(dirId);
+                SHA256Item fileId = new SHA256Item(LittleEndianUtils.hexStringToByteArray(idHexString));
+                returnValue = fileId;
             } else {
-                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
+                lLogger.info("checkFileId succeeded, but rows aren't correct");
             }
         }
-        else
-        {
-            return Future.failedFuture(future.cause());
+        else{
+            Throwable cause = future.cause();
+            lLogger.info("checkFileId failed with an error: " + cause.getMessage());
         }
+        return returnValue;
     }
 
     public static SHA256Item generateFileId(byte[] lNsIdBytes, byte[] lParentDirid, byte[] lFileNameBytes, byte[] salt) {
@@ -525,10 +552,11 @@ public class NameNodeUtils {
         return generateIdForPath(pathArray, salt);
     }
 
-    public static Future<SHA256Item> getFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
-        Future<SHA256Item> existingFileIdFuture = checkFileId(lReq, lVertxMySQLClient, lLogger);
-        if (existingFileIdFuture.succeeded()) {
-            return existingFileIdFuture;
+    public static StorageClsMetaPayload getFileId(FileIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        StorageClsMetaPayload returnValue = null;
+        SHA256Item existingFileId = checkFileId(lReq, lVertxMySQLClient, lLogger);
+        if (existingFileId != null) {
+            returnValue = new FileIdGenerateAndRegisterRsp(lReq, existingFileId);
         } else {
             String fileName = new String(lReq.fileNameUtf8Bytes, StandardCharsets.UTF_8);
             String salt = Long.toHexString(System.nanoTime());
@@ -540,13 +568,16 @@ public class NameNodeUtils {
 
             doWaitOnFuture(insertFuture);
             if (insertFuture.succeeded()) {
-                registerFileId(fileId, lReq, salt, lVertxMySQLClient); // regiseter file_id
+                registerFileId(fileId, lReq, salt, lVertxMySQLClient); // register file_id
                 addFileVersion(fileId, lVertxMySQLClient);//adding file_version
-                return Future.succeededFuture(fileId);
+                returnValue = new FileIdGenerateAndRegisterRsp(lReq, fileId);
             } else {
-                return Future.failedFuture(insertFuture.cause());
+                Throwable cause = insertFuture.cause();
+                lLogger.info("getFileId failed with an error: " + cause.getMessage());
+                returnValue = new StorageClsMetaErrorRsp(cause.getMessage(), lReq);
             }
         }
+        return returnValue;
     }
 
     public static void registerFileId(SHA256Item lFileId, FileIdGenerateAndRegisterReq lReq, String lSalt, MySQLPool lVertxMySQLClient) {
@@ -572,7 +603,8 @@ public class NameNodeUtils {
         }
     }
 
-    public static Future<Integer> getAndUpdateFileVersionNo(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+    public static Integer getAndUpdateFileVersionNo(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        int returnValue = -1;
         String sql = "SELECT file_version from accounts.file_version_info where file_id = '" + lReq.fileId.toHex() + "'";
         Future<RowSet<Row>> future = lVertxMySQLClient
                 .query(sql)
@@ -583,15 +615,17 @@ public class NameNodeUtils {
             if (rows != null && rows.size() > 0) {
                 int fileVersion = rows.iterator().next().getInteger("file_version");
                 updateFileVersion(lReq.fileId, lVertxMySQLClient);
-                return Future.succeededFuture(fileVersion);
+                returnValue = fileVersion;
             }
             else
             {
-                return Future.failedFuture(new Throwable("succeeded, but rows aren't correct"));
+                lLogger.info("getAndUpdateFileVersionNo succeeded, but rows aren't correct");
             }
         } else {
-            return Future.failedFuture(future.cause());
+            Throwable cause = future.cause();
+            lLogger.info("getAndUpdateFileVersionNo failed with an error: " + cause.getMessage());
         }
+        return returnValue;
     }
 
     public static void updateFileVersion(SHA256Item lFileId, MySQLPool lVertxMySQLClient) {
@@ -615,11 +649,10 @@ public class NameNodeUtils {
         return generateIdForPath(pathArray, salt);
     }
 
-    public static Future<SHA256Item> getFileVersionId(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
-        Future<Integer> fileVersionFuture = getAndUpdateFileVersionNo(lReq, lVertxMySQLClient, lLogger);
-        doWaitOnFuture(fileVersionFuture);
-        if (fileVersionFuture.succeeded()) {
-            int fileVersion = fileVersionFuture.result();
+    public static StorageClsMetaPayload getFileVersionId(FileVersionIdGenerateAndRegisterReq lReq, MySQLPool lVertxMySQLClient, Logger lLogger) {
+        StorageClsMetaPayload returnValue = null;
+        Integer fileVersion = getAndUpdateFileVersionNo(lReq, lVertxMySQLClient, lLogger);
+        if (fileVersion >= 0) {
             String salt = Long.toHexString(System.nanoTime());
             SHA256Item fileVersionId = generateFileVersionId(lReq.fileId.hashdata,
                     BigInteger.valueOf(fileVersion).toByteArray(), salt.getBytes());
@@ -629,13 +662,15 @@ public class NameNodeUtils {
             doWaitOnFuture(insertFuture);
             if (insertFuture.succeeded()) {
                 registerFileVersionId(fileVersionId, lReq, fileVersion, salt, lVertxMySQLClient);
-                return Future.succeededFuture(fileVersionId);
+                returnValue = new FileVersionIdGenerateAndRegisterRsp(lReq, fileVersionId);
             } else {
-                return Future.failedFuture(insertFuture.cause());
+                Throwable cause = insertFuture.cause();
+                lLogger.info("getFileVersionId failed with an error: " + cause.getMessage());
             }
         } else {
-            return Future.failedFuture(fileVersionFuture.cause());
+            lLogger.info("getAndUpdateFileVersionNo failed with an error");
         }
+        return returnValue;
     }
 
     public static void registerFileVersionId(SHA256Item lFileVersionId, FileVersionIdGenerateAndRegisterReq lReq, int lFileVersion, String lSalt, MySQLPool lVertxMySQLClient) {

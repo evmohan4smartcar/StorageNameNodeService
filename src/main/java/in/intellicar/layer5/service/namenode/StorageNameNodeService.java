@@ -55,7 +55,7 @@ public class StorageNameNodeService {
 
         // STEP 3: Start the MYSQL Query Handler Thread
         MySQLQueryHandler mysqlQueryHandler = new MySQLQueryHandler(vertx, serverProperties.scratchDir, serverProperties.dbMySQLProps,
-                new NameNodePayloadHandler(vertx), consoleLogger);
+                new NameNodePayloadHandler(), consoleLogger);
         mysqlQueryHandler.init();
         mysqlQueryHandler.start();
 
