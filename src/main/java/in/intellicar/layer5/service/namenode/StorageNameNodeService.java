@@ -23,9 +23,8 @@ public class StorageNameNodeService {
     public static void main(String args[]) {
         try {
             System.setProperty("java.util.logging.SimpleFormatter.format", "%1$tb %1$td, %1$tY %1$tl:%1$tM:%1$tS %1$Tp %2$s %4$s: %5$s%6$s%n");
-        } catch (Exception e) {
+        } catch (Exception e) {}
 
-        }
         String configFile;
         if (args.length >= 1) {
             configFile = args[0];

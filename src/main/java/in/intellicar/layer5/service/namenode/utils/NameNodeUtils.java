@@ -238,7 +238,7 @@ public class NameNodeUtils {
         }
     }
 
-    public static StorageClsMetaPayload getAccountID(AccIdGenerateReq lReq, MySQLPool vertxMySQLClient, Logger logger){
+    public static StorageClsMetaPayload getAccountID(AccIdGenerateReq lReq, MySQLPool vertxMySQLClient, Logger logger) {
         String accountName = new String(lReq.accNameUtf8Bytes, StandardCharsets.UTF_8);
         StorageClsMetaPayload returnValue = null;
         SHA256Item checkedAccountId = checkAccountID(accountName, vertxMySQLClient, logger);
@@ -263,8 +263,14 @@ public class NameNodeUtils {
 //        else {
 //            accountIDSHA = generateAccountId(req.accNameUtf8Bytes, salt.getBytes());
             //TODO: Update db.table_name
-            Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, salt, account_id, ack) values (?, ?, ?, ?)")
-                    .execute(Tuple.of(accountName, salt, accountIDSHA.toHex(), 0));
+            SHA256Item accountNameSHA = null;
+            try {
+                accountNameSHA = SHA256Utils.getSHA256("in.intellicar".getBytes(StandardCharsets.UTF_8));
+            } catch (NoSuchAlgorithmException e) {
+                e.printStackTrace();
+            }
+            Future<RowSet<Row>> insertFuture = vertxMySQLClient.preparedQuery("INSERT INTO accounts.account_info (account_name, account_name_sha, salt, account_id, ack) values (?, ?, ?, ?, ?)")
+                    .execute(Tuple.of(accountName, accountNameSHA.toHex(),salt, accountIDSHA.toHex(), 0));
 
             doWaitOnFuture(insertFuture);
             if (insertFuture.succeeded()) {
@@ -379,8 +385,8 @@ public class NameNodeUtils {
 
     public static void updateAckOfNsName(NsIdRegisterRsp lRsp, MySQLPool lVertxMySQLClient, Logger logger) {
         String nsName = new String(lRsp.nsIdRegisterReq.nsNameUtf8Bytes, StandardCharsets.UTF_8);
-        String sql = "Update accounts.namespaceinfo set ack = '"+ lRsp.ackFlag +"' where namespace_name = '" + nsName +
-                "' and account_id = '" + lRsp.nsIdRegisterReq.accountId.toHex();
+        String sql = "Update accounts.namespace_info set ack = '"+ lRsp.ackFlag +"' where namespace_name = '" + nsName +
+                "' and account_id = '" + lRsp.nsIdRegisterReq.accountId.toHex() + "'";
         Future<RowSet<Row>> updateFuture = lVertxMySQLClient
                 .query(sql)
                 .execute();
