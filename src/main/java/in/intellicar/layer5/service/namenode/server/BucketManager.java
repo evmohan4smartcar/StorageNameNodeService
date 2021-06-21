@@ -1,5 +1,6 @@
 package in.intellicar.layer5.service.namenode.server;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaPayload;
 import in.intellicar.layer5.beacon.storagemetacls.payload.SplitBucketReq;
 import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.IBucketRelatedIdInfoProvider;
@@ -13,6 +14,9 @@ import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.Message;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.*;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
@@ -32,8 +36,9 @@ public class BucketManager extends Thread {
     private Logger _logger;
     private AtomicBoolean _stop;
     private IBucketEditor _bucketModel;
+    private IBucketsConfigUpdater _configUpdater;
 
-    public BucketManager(Vertx lVertx, String lScratchDir, MySQLProps lMySQLProps, IBucketEditor lBucketEditor, Logger lLogger)
+    public BucketManager(Vertx lVertx, String lScratchDir, MySQLProps lMySQLProps, IBucketEditor lBucketEditor, IBucketsConfigUpdater lConfigUpdater, Logger lLogger)
     {
         _mySqlProps = lMySQLProps;
         _vertx = lVertx;
@@ -44,6 +49,7 @@ public class BucketManager extends Thread {
         _scratchDir = lScratchDir;
         _stop = new AtomicBoolean(false);
         _bucketModel = lBucketEditor;
+        _configUpdater = lConfigUpdater;
     }
 
     public void init()
@@ -95,9 +101,18 @@ public class BucketManager extends Thread {
 //                Future<StorageClsMetaPayload> future = Future.future();
 
                 if (event != null && event.body() instanceof SplitBucketReq) {
-                    //send it to appropriate bucket handling thread
 
-                    _eventBus.request(getVertexConsumerAddress(event.body()), event);
+                    SHA256Item splitId = ((SplitBucketReq)event.body()).splitAt;
+                    //use shell script to split the bucket
+                    executeSplit(splitId.toHex());
+
+
+                    //update BucketModel
+                    _bucketModel.splitBucket(splitId);
+
+                    //Update configFile
+                    _configUpdater.splitBucketAt(splitId.toHex());
+
                 }
             }
         } catch (InterruptedException e) {
@@ -145,4 +160,37 @@ public class BucketManager extends Thread {
         return returnValue;
     }
 
+    private void executeSplit(String lSplitId) {
+        try {
+
+            // Run a shell script
+            Process process = Runtime.getRuntime().exec(_scratchDir + "/scripts/split.sh");
+
+            StringBuilder output = new StringBuilder();
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()));
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line + "\n");
+            }
+
+            int exitVal = process.waitFor();
+            if (exitVal == 0) {
+                _logger.info("Success!");
+                _logger.info(String.valueOf(output));
+            } else {
+                _logger.info("Print script failed");
+            }
+
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
 }
+
+

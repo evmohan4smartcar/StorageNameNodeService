@@ -267,7 +267,7 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
 
     private String getVertexConsumerAddress(StorageClsMetaPayload lRequestPayload)
     {
-        String idToCheck = getBucketRelatedIdStringForPayload(lRequestPayload);
+        //String idToCheck = getBucketRelatedIdStringForPayload(lRequestPayload);
         String returnValue = "";
         BucketInfo matchedBucket = _bucketInfoProvider.getBucketForPayload(lRequestPayload);
         returnValue = getConsumerAddressForBucket(matchedBucket);
