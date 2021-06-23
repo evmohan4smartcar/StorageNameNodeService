@@ -20,13 +20,27 @@ public class BucketModel implements IPayloadBucketInfoProvider, IBucketEditor{
     public BucketInfo getBucketForPayload(StorageClsMetaPayload lPayload) {
         if(lPayload instanceof IBucketRelatedIdInfoProvider)
         {
-            return getMatchingBucket(((IBucketRelatedIdInfoProvider)lPayload).getIdReleatedToBucket().toHex());
+            return getMatchingBucketForId(((IBucketRelatedIdInfoProvider)lPayload).getIdReleatedToBucket().toHex());
         }
         else if(lPayload instanceof SplitBucketReq)
         {
             return null;
         }
         return null;
+    }
+
+    public BucketInfo getMatchingBucketForId(String lIdToMatch)
+    {
+        BucketInfo returnValue = null;
+        for(BucketInfo curBucket : _buckets)
+        {
+            if(isBucketMatched(lIdToMatch, curBucket))
+            {
+                returnValue = curBucket;
+                break;
+            }
+        }
+        return returnValue;
     }
 
     @Override
@@ -44,7 +58,7 @@ public class BucketModel implements IPayloadBucketInfoProvider, IBucketEditor{
     {
         //TODO:: lock need to be used around list
         //null check isn't needed as it's called by bucketmanager who already taken care of spliting
-        BucketInfo matchedBucket = getMatchingBucket(lSplitId.toHex());
+        BucketInfo matchedBucket = getMatchingBucketForId(lSplitId.toHex());
         _buckets.remove(matchedBucket);
         BucketInfo newBucket = new BucketInfo(lSplitId.toHex(), matchedBucket.endBucket.toHex());
         matchedBucket.endBucket = lSplitId;
@@ -56,20 +70,6 @@ public class BucketModel implements IPayloadBucketInfoProvider, IBucketEditor{
     {
         return lIdToMatch.compareToIgnoreCase(lBucket.startBucket.toHex()) > 0
                 && lIdToMatch.compareToIgnoreCase(lBucket.endBucket.toHex()) <= 0;
-    }
-
-    private BucketInfo getMatchingBucket(String lIdToMatch)
-    {
-        BucketInfo returnValue = null;
-        for(BucketInfo curBucket : _buckets)
-        {
-            if(isBucketMatched(lIdToMatch, curBucket))
-            {
-                returnValue = curBucket;
-                break;
-            }
-        }
-        return returnValue;
     }
 
 }

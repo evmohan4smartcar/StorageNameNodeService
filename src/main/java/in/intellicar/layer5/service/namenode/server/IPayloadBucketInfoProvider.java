@@ -7,4 +7,5 @@ import in.intellicar.layer5.beacon.storagemetacls.service.common.props.BucketInf
 public interface IPayloadBucketInfoProvider
 {
     public BucketInfo getBucketForPayload(StorageClsMetaPayload lPayload);
+    public BucketInfo getMatchingBucketForId(String lIdToMatch);
 }

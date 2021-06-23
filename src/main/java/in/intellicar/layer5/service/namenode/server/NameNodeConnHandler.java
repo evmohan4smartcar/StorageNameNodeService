@@ -64,9 +64,13 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
     public static int MAIL_ADDED = 1;
 
     private LinkedBlockingDeque<StorageClsMetaPayload> _requestQueue;
+    private LinkedBlockingDeque<StorageClsMetaPayload> _requestQueueOfNewBucket;
+    private BucketInfo _newSplitBucket;
+    private Object _newBucketLock;
     private AtomicBoolean _isProcessing = new AtomicBoolean(false);
     private IPayloadBucketInfoProvider _bucketInfoProvider;
     private static String CONSUMER_ADDRESS_PREFIX = "/mysqlqueryhandler";
+    public static String SPLIT_NOTIFICATION_ADDRESS = "/splitnotificationhandler";
 
     public NameNodeConnHandler(String scratchDir, Layer5BeaconParser l5parser, Vertx vertx, IPayloadBucketInfoProvider lPayloadBucketInfoProvider, Logger logger) {
         super();
@@ -80,12 +84,37 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
         this.eventBus = vertx.eventBus();
         this.mailbox = new LinkedBlockingQueue<>();
         _requestQueue = new LinkedBlockingDeque<>();
+        _requestQueueOfNewBucket = new LinkedBlockingDeque<>();
+        _newSplitBucket = null;
+        _newBucketLock = new Object();
 
         this.seqId = 0;
         this.ctx = null;
         this.localBuffer = new byte[16 * 1024];
         this.bufwidx = 0;
         this.bufridx = 0;
+
+        eventBus.consumer(SPLIT_NOTIFICATION_ADDRESS, new Handler<Message<String>>() {
+            @Override
+            public void handle(Message<String> event) {
+                String splitId = event.body();
+                if(splitId != null && !splitId.isEmpty())
+                {
+                    BucketInfo currentBucket = _bucketInfoProvider.getMatchingBucketForId(splitId);
+                    synchronized (_newBucketLock) {
+                        _newSplitBucket = new BucketInfo(splitId, currentBucket.endBucket.toHex());
+                    }
+                }
+                else
+                {
+                    _requestQueue.addAll(_requestQueueOfNewBucket);
+                    _requestQueueOfNewBucket.clear();
+                    synchronized (_newBucketLock) {
+                        _newSplitBucket = null;
+                    }
+                }
+            }
+        });
     }
 
     public void cleanUpLocalBuffer(){
@@ -253,8 +282,25 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
 
     private boolean isBucketMatched(String lIdToMatch, BucketInfo lBucket)
     {
+        if(lBucket == null)//this case occurs when _newSplitBucket is null
+            return false;
         return lIdToMatch.compareToIgnoreCase(lBucket.startBucket.toHex()) > 0
                 && lIdToMatch.compareToIgnoreCase(lBucket.endBucket.toHex()) <= 0;
+    }
+    /**
+     * Checks if payload belongs to new split and adds payload to the queue if that's the case
+     */
+    private boolean doesPayloadBelongsToNewSplitAndProcessPayloadIfBelongs(StorageClsMetaPayload lRequestPayload)
+    {
+        boolean returnValue = false;
+        String idString = getBucketRelatedIdStringForPayload(lRequestPayload);
+        synchronized (_newBucketLock){
+            if(isBucketMatched(idString, _newSplitBucket)) {
+                _requestQueueOfNewBucket.add(lRequestPayload);
+                returnValue = true;
+            }
+        }
+        return returnValue;
     }
 
     private String getConsumerAddressForBucket(BucketInfo lBucket)
@@ -288,7 +334,8 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
                 e.printStackTrace();
             }
             if (nextPayload != null){
-                return nextPayload;
+                if(!doesPayloadBelongsToNewSplitAndProcessPayloadIfBelongs(nextPayload))
+                    return nextPayload;
             }
         }
     }

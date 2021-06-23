@@ -26,8 +26,9 @@ import java.util.logging.Logger;
 public class BucketManager extends Thread {
 
     //private List<Thread> _bucketThreads;
-    private Map<BucketInfo, MySQLQueryHandler> _bucketThreadMap;
-    private MySQLProps _mySqlProps;
+    //private Map<BucketInfo, MySQLQueryHandler> _bucketThreadMap;
+    private Map<String, MySQLQueryHandler> _bucketThreadMap;//map with object as key would give me tough time, hence changed to string
+    private MySQLProps _mySqlProps;//is used only to load buckets from initial config values. There after it maintains it's own list of buckets array.
     private Vertx _vertx;
     private LinkedBlockingDeque<Message<StorageClsMetaPayload>> _eventQueue;
     private EventBus _eventBus;
@@ -36,9 +37,10 @@ public class BucketManager extends Thread {
     private Logger _logger;
     private AtomicBoolean _stop;
     private IBucketEditor _bucketModel;
+    private IPayloadBucketInfoProvider _bucketInfoProvider;
     private IBucketsConfigUpdater _configUpdater;
 
-    public BucketManager(Vertx lVertx, String lScratchDir, MySQLProps lMySQLProps, IBucketEditor lBucketEditor, IBucketsConfigUpdater lConfigUpdater, Logger lLogger)
+    public BucketManager(Vertx lVertx, String lScratchDir, MySQLProps lMySQLProps, IBucketEditor lBucketEditor, IPayloadBucketInfoProvider lBucketInfoProvider, IBucketsConfigUpdater lConfigUpdater, Logger lLogger)
     {
         _mySqlProps = lMySQLProps;
         _vertx = lVertx;
@@ -49,6 +51,7 @@ public class BucketManager extends Thread {
         _scratchDir = lScratchDir;
         _stop = new AtomicBoolean(false);
         _bucketModel = lBucketEditor;
+        _bucketInfoProvider = lBucketInfoProvider;
         _configUpdater = lConfigUpdater;
     }
 
@@ -64,7 +67,7 @@ public class BucketManager extends Thread {
                     new NameNodePayloadHandler(), consumerAddress, _logger);
             mysqlQueryHandler.init();
             mysqlQueryHandler.start();
-            _bucketThreadMap.put(curBucket, mysqlQueryHandler);
+            _bucketThreadMap.put(consumerAddress, mysqlQueryHandler);
             _bucketModel.addBucket(curBucket);
         }
 
@@ -103,16 +106,23 @@ public class BucketManager extends Thread {
                 if (event != null && event.body() instanceof SplitBucketReq) {
 
                     SHA256Item splitId = ((SplitBucketReq)event.body()).splitAt;
+                    String splitIdString = splitId.toHex();
+
+                    //Notify connHandler so that it takescare of new requests belonging to new bucket
+                    //TODO:: yet to handle the case when the connection established after notification and while in process of split
+                    _eventBus.request(NameNodeConnHandler.SPLIT_NOTIFICATION_ADDRESS, splitIdString);
+
                     //use shell script to split the bucket
-                    executeSplit(splitId.toHex());
+                    executeSplit(splitIdString);
 
-
-                    //update BucketModel
-                    _bucketModel.splitBucket(splitId);
+                    //updating buckets and their sqlHandlers wrt split
+                    updateBucketsAndBucketRelatedThreadOnSplit(splitId);
 
                     //Update configFile
-                    _configUpdater.splitBucketAt(splitId.toHex());
+                    _configUpdater.splitBucketAt(splitIdString);
 
+                    //notification without idString is like saying that the split is done.
+                    _eventBus.request(NameNodeConnHandler.SPLIT_NOTIFICATION_ADDRESS, "");
                 }
             }
         } catch (InterruptedException e) {
@@ -189,6 +199,34 @@ public class BucketManager extends Thread {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private void updateBucketsAndBucketRelatedThreadOnSplit(SHA256Item lSplitId)
+    {
+        String splitIdString = lSplitId.toHex();
+        //updating current bucket and it's sqlHandler
+        BucketInfo currentBucket = _bucketInfoProvider.getMatchingBucketForId(splitIdString);
+        String currentBucketConsumerAddress = CONSUMER_ADDRESS_PREFIX + "/" + currentBucket.startBucket.toHex() + "/" + currentBucket.endBucket.toHex();
+        MySQLQueryHandler currentSQLHandler = _bucketThreadMap.get(currentBucketConsumerAddress);
+        String updatedCurrentConsumerAddress = CONSUMER_ADDRESS_PREFIX + "/" + currentBucket.startBucket.toHex() + "/" + splitIdString;
+        _bucketThreadMap.remove(currentBucketConsumerAddress);
+        _bucketThreadMap.put(updatedCurrentConsumerAddress, currentSQLHandler);
+        //registering new consumer address
+        currentSQLHandler.registerConsumerAddress(updatedCurrentConsumerAddress);
+
+        //adding new split and it's sqlHandler
+        String newBucketConsumerAddress = CONSUMER_ADDRESS_PREFIX + "/" + splitIdString + "/" + currentBucket.endBucket.toHex();
+        MySQLQueryHandler<StorageClsMetaPayload> mysqlQueryHandler = new MySQLQueryHandler(_vertx, _scratchDir, _mySqlProps,
+                new NameNodePayloadHandler(), newBucketConsumerAddress, _logger);
+        mysqlQueryHandler.init();
+        mysqlQueryHandler.start();
+        _bucketThreadMap.put(newBucketConsumerAddress, mysqlQueryHandler);
+
+        //update BucketModel
+        _bucketModel.splitBucket(lSplitId);
+
+        //de-registering old consumer of current bucket
+        currentSQLHandler.updateEventConsumer();
     }
 
 }

@@ -59,7 +59,7 @@ public class StorageNameNodeService {
 //        mysqlQueryHandler.start();
         BucketModel bucketModel = new BucketModel();
         BucketManager bucketManager = new BucketManager(vertx, serverProperties.scratchDir, serverProperties.dbMySQLProps,
-                bucketModel, serverProperties, consoleLogger);
+                bucketModel, bucketModel, serverProperties, consoleLogger);
         bucketManager.init();
         bucketManager.start();
 
