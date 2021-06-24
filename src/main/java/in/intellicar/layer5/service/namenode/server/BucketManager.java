@@ -9,6 +9,7 @@ import in.intellicar.layer5.beacon.storagemetacls.service.common.props.BucketInf
 import in.intellicar.layer5.beacon.storagemetacls.service.common.props.MySQLProps;
 import in.intellicar.layer5.service.namenode.mysql.NameNodePayloadHandler;
 import in.intellicar.layer5.utils.sha.SHA256Item;
+import in.intellicar.layer5.utils.sha.SHA256Utils;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.eventbus.EventBus;
@@ -110,7 +111,8 @@ public class BucketManager extends Thread {
 
                     //Notify connHandler so that it takescare of new requests belonging to new bucket
                     //TODO:: yet to handle the case when the connection established after notification and while in process of split
-                    _eventBus.request(NameNodeConnHandler.SPLIT_NOTIFICATION_ADDRESS, splitIdString);
+                    //_eventBus.request(NameNodeConnHandler.SPLIT_END_NOTIFICATION_ADDRESS, splitIdString);
+                    _bucketInfoProvider.setSplitId(splitId);// ConnHandlers call method on bucketInfoProvider to know if the payload belongs to new split or not;hence no need of above notification
 
                     //use shell script to split the bucket
                     executeSplit(splitIdString);
@@ -122,7 +124,8 @@ public class BucketManager extends Thread {
                     _configUpdater.splitBucketAt(splitIdString);
 
                     //notification without idString is like saying that the split is done.
-                    _eventBus.request(NameNodeConnHandler.SPLIT_NOTIFICATION_ADDRESS, "");
+                    _eventBus.request(NameNodeConnHandler.SPLIT_END_NOTIFICATION_ADDRESS, "");
+                    _bucketInfoProvider.setSplitId(null);
                 }
             }
         } catch (InterruptedException e) {
@@ -215,7 +218,7 @@ public class BucketManager extends Thread {
         currentSQLHandler.registerConsumerAddress(updatedCurrentConsumerAddress);
 
         //adding new split and it's sqlHandler
-        String newBucketConsumerAddress = CONSUMER_ADDRESS_PREFIX + "/" + splitIdString + "/" + currentBucket.endBucket.toHex();
+        String newBucketConsumerAddress = CONSUMER_ADDRESS_PREFIX + "/" + SHA256Utils.getOneAddedHash(lSplitId).toHex() + "/" + currentBucket.endBucket.toHex();
         MySQLQueryHandler<StorageClsMetaPayload> mysqlQueryHandler = new MySQLQueryHandler(_vertx, _scratchDir, _mySqlProps,
                 new NameNodePayloadHandler(), newBucketConsumerAddress, _logger);
         mysqlQueryHandler.init();

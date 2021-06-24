@@ -65,12 +65,10 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
 
     private LinkedBlockingDeque<StorageClsMetaPayload> _requestQueue;
     private LinkedBlockingDeque<StorageClsMetaPayload> _requestQueueOfNewBucket;
-    private BucketInfo _newSplitBucket;
-    private Object _newBucketLock;
     private AtomicBoolean _isProcessing = new AtomicBoolean(false);
     private IPayloadBucketInfoProvider _bucketInfoProvider;
     private static String CONSUMER_ADDRESS_PREFIX = "/mysqlqueryhandler";
-    public static String SPLIT_NOTIFICATION_ADDRESS = "/splitnotificationhandler";
+    public static String SPLIT_END_NOTIFICATION_ADDRESS = "/splitnotificationhandler";
 
     public NameNodeConnHandler(String scratchDir, Layer5BeaconParser l5parser, Vertx vertx, IPayloadBucketInfoProvider lPayloadBucketInfoProvider, Logger logger) {
         super();
@@ -85,8 +83,6 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
         this.mailbox = new LinkedBlockingQueue<>();
         _requestQueue = new LinkedBlockingDeque<>();
         _requestQueueOfNewBucket = new LinkedBlockingDeque<>();
-        _newSplitBucket = null;
-        _newBucketLock = new Object();
 
         this.seqId = 0;
         this.ctx = null;
@@ -94,25 +90,12 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
         this.bufwidx = 0;
         this.bufridx = 0;
 
-        eventBus.consumer(SPLIT_NOTIFICATION_ADDRESS, new Handler<Message<String>>() {
+        eventBus.consumer(SPLIT_END_NOTIFICATION_ADDRESS, new Handler<Message<String>>() {
             @Override
             public void handle(Message<String> event) {
-                String splitId = event.body();
-                if(splitId != null && !splitId.isEmpty())
-                {
-                    BucketInfo currentBucket = _bucketInfoProvider.getMatchingBucketForId(splitId);
-                    synchronized (_newBucketLock) {
-                        _newSplitBucket = new BucketInfo(splitId, currentBucket.endBucket.toHex());
-                    }
-                }
-                else
-                {
+                //String splitId = event.body();
                     _requestQueue.addAll(_requestQueueOfNewBucket);
                     _requestQueueOfNewBucket.clear();
-                    synchronized (_newBucketLock) {
-                        _newSplitBucket = null;
-                    }
-                }
             }
         });
     }
@@ -280,6 +263,17 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
         return returnValue;
     }
 
+    private SHA256Item getBucketRelatedIdForPayload(StorageClsMetaPayload lRequestPayload)
+    {
+        SHA256Item returnValue = null;
+        if(lRequestPayload instanceof IBucketRelatedIdInfoProvider)
+        {
+            SHA256Item idToCheck = ((IBucketRelatedIdInfoProvider)lRequestPayload).getIdReleatedToBucket();
+            returnValue = idToCheck;
+        }
+        return returnValue;
+    }
+
     private boolean isBucketMatched(String lIdToMatch, BucketInfo lBucket)
     {
         if(lBucket == null)//this case occurs when _newSplitBucket is null
@@ -293,12 +287,9 @@ public class NameNodeConnHandler extends ChannelInboundHandlerAdapter {
     private boolean doesPayloadBelongsToNewSplitAndProcessPayloadIfBelongs(StorageClsMetaPayload lRequestPayload)
     {
         boolean returnValue = false;
-        String idString = getBucketRelatedIdStringForPayload(lRequestPayload);
-        synchronized (_newBucketLock){
-            if(isBucketMatched(idString, _newSplitBucket)) {
-                _requestQueueOfNewBucket.add(lRequestPayload);
-                returnValue = true;
-            }
+        if (_bucketInfoProvider.doesBelongToNewSplitBucket(lRequestPayload)) {
+            _requestQueueOfNewBucket.add(lRequestPayload);
+            returnValue = true;
         }
         return returnValue;
     }
