@@ -3,6 +3,8 @@ package in.intellicar.layer5.service.namenode.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import in.intellicar.layer5.beacon.storagemetacls.StorageClsMetaPayload;
 import in.intellicar.layer5.beacon.storagemetacls.payload.SplitBucketReq;
+import in.intellicar.layer5.beacon.storagemetacls.payload.SplitBucketRsp;
+import in.intellicar.layer5.beacon.storagemetacls.payload.StorageClsMetaErrorRsp;
 import in.intellicar.layer5.beacon.storagemetacls.payload.namenodeservice.IBucketRelatedIdInfoProvider;
 import in.intellicar.layer5.beacon.storagemetacls.service.common.mysql.MySQLQueryHandler;
 import in.intellicar.layer5.beacon.storagemetacls.service.common.props.BucketInfo;
@@ -106,26 +108,35 @@ public class BucketManager extends Thread {
 
                 if (event != null && event.body() instanceof SplitBucketReq) {
 
-                    SHA256Item splitId = ((SplitBucketReq)event.body()).splitAt;
+                    SplitBucketReq splitBucketReq = (SplitBucketReq)event.body();
+                    SHA256Item splitId = splitBucketReq.splitAt;
                     String splitIdString = splitId.toHex();
 
                     //Notify connHandler so that it takescare of new requests belonging to new bucket
                     //TODO:: yet to handle the case when the connection established after notification and while in process of split
                     //_eventBus.request(NameNodeConnHandler.SPLIT_END_NOTIFICATION_ADDRESS, splitIdString);
-                    _bucketInfoProvider.setSplitId(splitId);// ConnHandlers call method on bucketInfoProvider to know if the payload belongs to new split or not;hence no need of above notification
+                    if(_bucketInfoProvider.setSplitId(splitId))// ConnHandlers call method on bucketInfoProvider to know if the payload belongs to new split or not;hence no need of above notification
+                    {
 
-                    //use shell script to split the bucket
-                    executeSplit(splitIdString);
+                        //use shell script to split the bucket
+                        executeSplit(splitIdString);
 
-                    //updating buckets and their sqlHandlers wrt split
-                    updateBucketsAndBucketRelatedThreadOnSplit(splitId);
+                        //updating buckets and their sqlHandlers wrt split
+                        updateBucketsAndBucketRelatedThreadOnSplit(splitId);
 
-                    //Update configFile
-                    _configUpdater.splitBucketAt(splitIdString);
+                        //Update configFile
+                        _configUpdater.splitBucketAt(splitIdString);
 
-                    //notification without idString is like saying that the split is done.
-                    _eventBus.request(NameNodeConnHandler.SPLIT_END_NOTIFICATION_ADDRESS, "");
-                    _bucketInfoProvider.setSplitId(null);
+                        //notification without idString is like saying that the split is done.
+                        _eventBus.request(NameNodeConnHandler.SPLIT_END_NOTIFICATION_ADDRESS, "");//TODO:: this might have to be changed to publish
+                        _bucketInfoProvider.setSplitId(null);
+                        //TODO:: need to send success/failure as response.
+                        event.reply(new SplitBucketRsp(splitBucketReq));
+                    }
+                    else
+                    {
+                        event.reply(new StorageClsMetaErrorRsp("SplitId provided doesn't belong to any of the buckets of this server", splitBucketReq));
+                    }
                 }
             }
         } catch (InterruptedException e) {

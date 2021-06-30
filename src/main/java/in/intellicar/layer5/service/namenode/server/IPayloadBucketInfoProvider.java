@@ -9,7 +9,7 @@ public interface IPayloadBucketInfoProvider
 {
     public BucketInfo getBucketForPayload(StorageClsMetaPayload lPayload);
     public BucketInfo getMatchingBucketForId(String lIdToMatch);
-    public void setSplitId(SHA256Item lSplitId);
+    public boolean setSplitId(SHA256Item lSplitId);
     public boolean doesBelongToNewSplitBucket(StorageClsMetaPayload lPayload);
 
 }

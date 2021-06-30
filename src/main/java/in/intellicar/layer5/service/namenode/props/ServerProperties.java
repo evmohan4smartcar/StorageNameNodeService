@@ -8,7 +8,10 @@ import in.intellicar.layer5.beacon.storagemetacls.service.common.props.MySQLProp
 import in.intellicar.layer5.beacon.storagemetacls.service.common.props.NettyProps;
 import in.intellicar.layer5.service.namenode.server.IBucketsConfigUpdater;
 import in.intellicar.layer5.utils.JsonUtils;
+import in.intellicar.layer5.utils.LittleEndianUtils;
 import in.intellicar.layer5.utils.PathUtils;
+import in.intellicar.layer5.utils.sha.SHA256Item;
+import in.intellicar.layer5.utils.sha.SHA256Utils;
 
 import java.io.FileWriter;
 import java.util.logging.Logger;
@@ -105,7 +108,7 @@ public class ServerProperties implements IBucketsConfigUpdater {
         String newBucketEndId = bucketArrayNode.get(matchingBucketIndex).get(END_BUCKET_TAG).asText();
         ((ObjectNode)bucketArrayNode.get(matchingBucketIndex)).put(END_BUCKET_TAG, lSplitId);
         ObjectNode newBucketNode = new ObjectMapper().createObjectNode() ;
-        newBucketNode.put(START_BUCKET_TAG, lSplitId);//TODO:: need to add 1 to splitId
+        newBucketNode.put(START_BUCKET_TAG, SHA256Utils.getOneAddedHash(new SHA256Item(LittleEndianUtils.hexStringToByteArray(lSplitId))).toHex());//TODO:: need to add 1 to splitId
         newBucketNode.put(END_BUCKET_TAG, newBucketEndId);
         bucketArrayNode.add(newBucketNode);
         JsonUtils.saveConfiguration(configFile, _configJson);

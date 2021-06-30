@@ -15,7 +15,7 @@ import java.util.logging.Logger;
 /**
  * @author krishna mohan
  * @version 1.0
- * @project StorageClsAccIDMetaService
+ * @project StorageNameNodeService
  * @date 01/03/21 - 4:38 PM
  */
 public class StorageNameNodeService {
@@ -52,11 +52,13 @@ public class StorageNameNodeService {
             }
         });
 
-        // STEP 3: Start the MYSQL Query Handler Thread
+//        // STEP 3: Start the MYSQL Query Handler Thread
 //        MySQLQueryHandler mysqlQueryHandler = new MySQLQueryHandler(vertx, serverProperties.scratchDir, serverProperties.dbMySQLProps,
 //                new NameNodePayloadHandler(), consoleLogger);
 //        mysqlQueryHandler.init();
 //        mysqlQueryHandler.start();
+        //
+        //STEP 3: Start BucketManager which initialises MySQL Query Handler related to every bucket.
         BucketModel bucketModel = new BucketModel();
         BucketManager bucketManager = new BucketManager(vertx, serverProperties.scratchDir, serverProperties.dbMySQLProps,
                 bucketModel, bucketModel, serverProperties, consoleLogger);

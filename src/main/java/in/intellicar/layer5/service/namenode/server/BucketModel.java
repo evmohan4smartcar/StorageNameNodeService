@@ -10,17 +10,20 @@ import in.intellicar.layer5.utils.sha.SHA256Utils;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BucketModel implements IPayloadBucketInfoProvider, IBucketEditor{
     private List<BucketInfo> _buckets;
     private BucketInfo _newSplitBucket;
-    private Object _newBucketLock;
+    private AtomicBoolean _isSplitInProgress;
+
     public BucketModel()
     {
         _buckets = new ArrayList<>();
         _newSplitBucket = null;
-        _newBucketLock = new Object();
+        _isSplitInProgress = new AtomicBoolean(false);
     }
+
     @Override
     public BucketInfo getBucketForPayload(StorageClsMetaPayload lPayload) {
         if(lPayload instanceof IBucketRelatedIdInfoProvider)
@@ -48,39 +51,39 @@ public class BucketModel implements IPayloadBucketInfoProvider, IBucketEditor{
         return returnValue;
     }
 
+    /**
+     * Considers lSplitId=null case as split end notification
+     * @param lSplitId
+     * @return false, if the splitId provided doesn't belong to any of the buckets of this server
+     */
     @Override
-    public void setSplitId(SHA256Item lSplitId) {
+    public boolean setSplitId(SHA256Item lSplitId) {
+        boolean returnValue = false;
         if(lSplitId == null)//considering null case as split end notification
         {
-            synchronized (_newBucketLock) {
-                _newSplitBucket = null;
-            }
+            _newSplitBucket = null;
+            _isSplitInProgress.set(false);
+            returnValue = true;//not needed, as we won't be checking it on split end notification
         }
         for(BucketInfo curBucket : _buckets)
         {
             if(isBucketMatched(lSplitId.toHex(), curBucket))
             {
-                synchronized (_newBucketLock) {
-                    _newSplitBucket = new BucketInfo(SHA256Utils.getOneAddedHash(lSplitId).toHex(), curBucket.endBucket.toHex());
-                }
+                _newSplitBucket = new BucketInfo(SHA256Utils.getOneAddedHash(lSplitId).toHex(), curBucket.endBucket.toHex());
+                _isSplitInProgress.set(true);
+                returnValue = true;
                 break;
             }
         }
+        return returnValue;
     }
 
     @Override
     public boolean doesBelongToNewSplitBucket(StorageClsMetaPayload lPayload) {
         boolean returnValue = false;
-        boolean isSplitGoingOn = false;
-        synchronized (_newBucketLock) {
-            isSplitGoingOn = (_newSplitBucket != null);
-            returnValue = false;
-        }
-        if(isSplitGoingOn && lPayload instanceof IBucketRelatedIdInfoProvider)
+        if(_isSplitInProgress.get() && lPayload instanceof IBucketRelatedIdInfoProvider)
         {
-            synchronized (_newBucketLock) {//TODO:: need to remove this mutex; Mutex making it all look like a mess
-                returnValue = isBucketMatched(((IBucketRelatedIdInfoProvider) lPayload).getIdReleatedToBucket().toHex(), _newSplitBucket);
-            }
+            returnValue = isBucketMatched(((IBucketRelatedIdInfoProvider) lPayload).getIdReleatedToBucket().toHex(), _newSplitBucket);
         }
         return returnValue;
     }
